@@ -32,14 +32,14 @@ def hist_expr_builder(column_name: str, ranges: list) -> pl.Expr:
 
 def get_histogram_from_file(filepath, column_name, ranges):
     """
-    :brief: Return a lazy-evaluable query that will return
-        a dataframe where each column is a range with a single row corresponding
-        to how many rows there were in the original dataframe with column in that
-        range
+    :brief: Return a lazy-evaluable query that generates a histogram
+        dataframe
     :param filepath: path to CSV
-    :param column: column to generate histogram of
-    :param ranges: list in form [(start1,end1),(start2,end2),...] of ranges,
-        
+    :param column_name: column to generate histogram of
+    :param ranges: list in form [(start1,end1),(start2,end2),...] of ranges
+    :brief: returns a lazy-evaluable query that will generate a histogram dataframe
+        with two columns, "hist_bin" (histogram ranges, each in the form of a two-item list),
+        and "count" (the number of rows where the indicated column was in that range)
     """
     q = (pl.scan_csv(filepath).select(pl.col(column_name),hist_expr_builder(column_name,ranges)).group_by("hist_bin").count())
     return q
