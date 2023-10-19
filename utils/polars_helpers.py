@@ -19,7 +19,9 @@ def get_spots_from_fovs(fov_frame, fov_ids, rel_method, **kwargs):  # -> pl.Expr
     :param fov_ids: list where each entry is a tuple in the form
         (slide_label,timestamp_start, timestamp_end, list_of_ids), where the list_of_ids
         is a list that
-        can be empty to select all fovs within that timestamp range on that slide
+        can be empty to select all fovs within that timestamp range on that slide,
+        where either of timestamp_start/end can be None to open the
+        interval on that end. By default, timestamp intervals are assumed to be closed on the left
     :param rel_method: function that takes a pl.Expr corresponding to the appropriate
         FOVs as input and returns a pl.Expr corresponding to the appropriate rows (associated
         to the selected FOVs) from the spot table as output, taking any additional kwargs
@@ -36,7 +38,26 @@ def get_spots_from_fovs(fov_frame, fov_ids, rel_method, **kwargs):  # -> pl.Expr
             on deepzoom overview of slide)
         ====
     """
-    pass
+    # Extract the slide_label, timestamp, and id_in_slide columns from fov_frame
+    fov_cols = ["slide_label", "id_in_slide", "timestamp"]
+    fov_expr = pl.col(fov_cols).select(fov_frame)
+    fov_filter = pl.col(fov_cols).is_not_null()
+
+    # Create a filter expression for each slide_label and timestamp range
+    for slide_label, timestamp_start, timestamp_end, fov_id_list in fov_ids:
+        current_filter_expr = fov_expr["slide_label"] == slide_label
+
+        if timestamp_start is not None:
+            current_filter_expr &= fov_expr["timestamp"] >= timestamp_start
+        if timestamp_end is not None:
+            current_filter_expr &= fov_expr["timestamp"] < timestamp_end
+
+        fov_filter |= current_filter_expr
+
+    # Call the rel_method function with the selected FOVs to get the corresponding rows from the spot table
+    spot_expr = rel_method(fov_expr.filter(fov_filter), **kwargs)
+
+    return spot_expr
 
 
 def default_relate_fovs_to_spots(rel_df, spot_df, fov_rows):  # ->pl.Expr:
