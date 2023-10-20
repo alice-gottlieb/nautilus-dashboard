@@ -1,4 +1,5 @@
 from dash import Dash, html, dash_table, dcc, callback, Output, Input
+import dash
 import pandas as pd
 import polars as pl
 import datetime as dt
@@ -74,33 +75,20 @@ app.layout = html.Div(
                     "border": "1px solid blue",
                 }
             ],
+            # TODO: Fix so that image path is determined by value in cell
             tooltip_data=[
                 {
-                    column: {"value": str(value), "type": "markdown"}
-                    if column != "image_uri"
-                    # else "{'link': app.get_relative_path(/'"
-                    # + value
-                    # + "'), 'alt_text': 'IMAGE 1', 'description': 'DESCRIPTION 1'}"
-                    else "![Spot Image]({app.get_relative_path('/images/nautilus1.jpg')})"
-                    for column, value in row.items()
+                    "image_uri": {
+                        "value": "![Nautilus]({})".format(
+                            dash.get_relative_path("/assets/images/nautilus1_tiny.jpg")
+                        ),
+                        "type": "markdown",
+                    }
                 }
                 for row in spots.to_pandas().to_dict("records")
             ],
             tooltip_duration=None,
             tooltip_delay=None,
-            # tooltip_conditional=[
-            #     {
-            #         "if": {"filter_query": '{image_uri} != ""', "column_id": "spot_id"},
-            #         "type": "markdown",
-            #         # "value": "![image]({})".format(
-            #         #     # spots[str(spots["spot_id"]) == "{spot_id}"][
-            #         #     #     "image_uri"
-            #         #     # ].to_list()[0
-            #         #     spots["image_uri"][0]
-            #         # ),
-            #         "value": "images/nautilus1.jpg",
-            #     }
-            # ],
         )
     ]
 )
