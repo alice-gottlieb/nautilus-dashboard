@@ -5,6 +5,8 @@ import polars as pl
 import datetime as dt
 import plotly.express as px
 
+# TODO: Add links to different pg for each FOV table
+
 slides = pl.DataFrame(
     {
         "slide_name": ["slide1", "slide2"],
@@ -16,9 +18,20 @@ slides = pl.DataFrame(
         "neg_annotated": [8, 9],
         "unsure_annotated": [9, 0],
         "total_annotated_positive_negative": [13, 16],
-        "FOV_count": [10, 11],
+        "fov_count": [10, 11],
         "rbcs": [12, 13],
     }
+)
+
+# add a column for viewing FOVs
+slides = slides.with_columns(
+    pl.concat_str(
+        [
+            pl.lit("[View FOVs](/"),
+            pl.col("slide_name"),
+            pl.lit("/)"),
+        ]
+    ).alias("view_fovs")
 )
 
 # slide_label (string, unique ID for containing slide over multiple timestamps)
@@ -59,7 +72,12 @@ app.layout = html.Div(
     [
         dash_table.DataTable(
             id="slides-table",
-            columns=[{"name": i, "id": i} for i in slides.columns],
+            columns=[
+                {"id": i, "name": i, "presentation": "markdown"}
+                if i == "view_fovs"
+                else {"name": i, "id": i}
+                for i in slides.columns
+            ],
             data=slides.to_pandas().to_dict("records"),
             # row_selectable="single",
             selected_rows=[],
@@ -115,6 +133,55 @@ app.layout = html.Div(
         ),
     ]
 )
+
+# Initialize the Dash app
+# app = dash.Dash(__name__, suppress_callback_exceptions=True)
+
+# # Define the layout of the app
+# app.layout = html.Div(
+#     [dcc.Location(id="url", refresh=False), html.Div(id="page-content")]
+# )
+
+# # Define the content for the main page
+# index_page = html.Div(
+#     [
+#         html.H1("Main Page"),
+#         html.Div(
+#             [
+#                 dcc.Link("Go to Page 1", href="/page-1"),
+#                 html.Br(),
+#                 dcc.Link("Go to Page 2", href="/page-2"),
+#             ]
+#         ),
+#     ]
+# )
+
+
+# # Define the callback to update page-content based on the URL
+# @app.callback(Output("page-content", "children"), Input("url", "pathname"))
+# def display_page(pathname):
+#     if pathname:
+#         page_number = pathname.split("-")[-1]  # Extract the page number from the URL
+
+#         # Dynamically create the content based on the page number
+#         page_content = html.Div(
+#             [
+#                 html.H1(f"Page {page_number}"),
+#                 html.Div(
+#                     [
+#                         dcc.Link("Go to Main Page", href="/"),
+#                         html.Br(),
+#                         dcc.Link(
+#                             f"Go to Page {int(page_number) % 2 + 1}",
+#                             href=f"/page-{int(page_number) % 2 + 1}",
+#                         ),
+#                     ]
+#                 ),
+#             ]
+#         )
+#         return page_content
+#     else:
+#         return index_page
 
 
 if __name__ == "__main__":
