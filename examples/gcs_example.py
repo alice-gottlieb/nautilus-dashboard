@@ -2,7 +2,13 @@ from google.cloud import storage
 from configparser import ConfigParser
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
-from utils.demo_io import get_initial_slide_df, get_fovs_df, get_top_level_dirs
+from utils.demo_io import (
+    get_initial_slide_df,
+    get_fovs_df,
+    get_top_level_dirs,
+    populate_slide_rows,
+    get_histogram_df,
+)
 import polars as pl
 from gcsfs import GCSFileSystem
 
@@ -33,9 +39,20 @@ slide_df = get_initial_slide_df(storage_service, bucket_name, gcs)
 print(slide_df)
 
 # select a couple of slides
-slides_of_interest = get_top_level_dirs(storage_service, bucket_name)[:10]
+slides_of_interest = get_top_level_dirs(storage_service, bucket_name)
+
+# repopulate rows on some slides with spot counts missing, and set threshold
+new_slide_df = populate_slide_rows(
+    storage_service,
+    bucket_name,
+    gcs,
+    slide_df,
+    slides_of_interest[:4],
+    set_threshold=0.8,
+)
+
+print(new_slide_df)
 
 # get DF for these slides' FOVs
 fov_df = get_fovs_df(storage_service, bucket_name, slides_of_interest)
-
 print(fov_df)

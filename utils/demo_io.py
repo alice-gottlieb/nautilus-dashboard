@@ -8,6 +8,26 @@ JSON, via config.ini at the root of this repository.
 """
 
 import polars as pl
+from utils.polars_helpers import hist_expr_builder
+
+
+def get_histogram_df(file, column_name, ranges):
+    """
+    :brief: Return a histogram dataframe. Modified version to work with GCS
+    :param file: file type
+    :param column_name: column to generate histogram of
+    :param ranges: list in form [(start1,end1),(start2,end2),...] of ranges
+    :brief: returns a lazy-evaluable query that will generate a histogram dataframe
+        with two columns, "hist_bin" (histogram ranges, each in the form of a two-item list),
+        and "count" (the number of rows where the indicated column was in that range)
+    """
+    hist_df = (
+        pl.read_csv(file)
+        .select(pl.col(column_name), hist_expr_builder(column_name, ranges))
+        .group_by("hist_bin")
+        .count()
+    )
+    return hist_df
 
 
 def get_top_level_dirs(storage_service, bucket_name):
@@ -157,3 +177,102 @@ def get_fovs_df(storage_service, bucket_name, list_of_slide_names):
         # add to total fov df
         fovs = pl.concat([fovs, sl_fovs_df])
     return fovs
+
+
+def populate_slide_rows(
+    storage_service, bucket_name, gcs, slide_df, list_of_slide_names, set_threshold=None
+):
+    """
+    :brief: Populate selected slides' rows with info that takes a longer time to compute
+    :param slide_df: per-slide dataframe defined by get_initial_slide_df
+    :param list_of_slide_names: list of slide names, not including bucket name
+    :param set_threshold: either a scalar to apply as threshold to all slides, or a list of thresholds
+        of the same length as list of slide names, to apply to each corresponding one
+    :return: version of slide df with more detailed info populated
+    """
+    if type(set_threshold) is list:
+        if len(set_threshold) != len(list_of_slide_names):
+            raise ValueError(
+                "length of set_threshold must be same as list of slide names if a list"
+            )
+    else:
+        set_threshold = [set_threshold] * len(list_of_slide_names)
+
+    new_slide_df = slide_df
+
+    for sl, thresh in zip(list_of_slide_names, set_threshold):
+        #### To set a new value in the row, set slide_row_dict[column_name][0]=value
+        slide_row_dict = (
+            slide_df.filter(pl.col("slide_name") == sl.strip("/"))
+            .head(1)
+            .to_dict(as_series=False)
+        )
+        if thresh is not None:  # update threshold if a new value is given
+            slide_row_dict["threshold"][0] = thresh
+
+        ### same count tally procedure, except we actually go as far as to open spot_data_raw
+        total_rbc_count_file_path = (
+            bucket_name.strip("/") + "/" + sl.strip("/") + "/total number of RBCs.txt"
+        )
+        segmentation_stat_file_path = (
+            bucket_name.strip("/") + "/" + sl.strip("/") + "/segmentation_stat.csv"
+        )
+        spot_data_raw_file_path = (
+            bucket_name.strip("/") + "/" + sl.strip("/") + "/spot_data_raw.csv"
+        )
+        try:  # check for rbc count tally file
+            with gcs.open(total_rbc_count_file_path, "r") as f:
+                slide_row_dict["rbcs"][0] = int(f.read().strip())
+        except:  # no rbc count tally file, try tallying segmentation_stat.csv
+            print("no spot tally file found for " + str(sl))
+            try:  # check for per-fov segmentation tally file
+                with gcs.open(segmentation_stat_file_path, "rb") as f:
+                    seg_stat_df = pl.read_csv(f)
+                    slide_row_dict["rbcs"][0] = seg_stat_df.select(
+                        pl.sum("count")
+                    ).item()
+            except:  # otherwise, check length of spot_data_raw.csv
+                print("no segmentation_stat file found for " + str(sl))
+                try:
+                    with gcs.open(spot_data_raw_file_path, "rb") as f:
+                        spot_data_df = pl.read_csv(f)
+                        slide_row_dict["rbcs"][0] = len(spot_data_df)
+                except:
+                    print("no spot_data_raw.csv found for " + str(sl))
+
+        if (
+            thresh is not None
+        ):  # compute new prediction counts if threshold has been changed
+            #### NOTE: Need to ask about how a prediction is deemed to be "unsure"
+            unsure_lower = thresh * 0.95
+            unsure_upper = thresh * 1.05
+            if unsure_upper >= 1.0:
+                unsure_upper = 0.99
+            if unsure_lower <= 0:
+                unsure_lower = 0.01
+            threshold_ranges = [
+                (0.0, unsure_lower),
+                (unsure_lower, unsure_upper),
+                (unsure_upper, 1.0),
+            ]
+            ### Basically trying to get number of spots  below the unsure range, in the unsure
+            ### range, and above the unsure range. Need to ask Rinni how to populate these
+            with gcs.open(spot_data_raw_file_path, "rb") as f:
+                try:
+                    hist_df = get_histogram_df(f, "R", threshold_ranges)
+                    print(hist_df)
+                except:
+                    print("We still don't know how to populate prediction counts?")
+
+        ### update row in dataframe to be returned
+        for k in slide_row_dict.keys():
+            if k == "slide_name":
+                continue
+            new_slide_df = new_slide_df.with_columns(
+                pl.when(pl.col("slide_name") == sl.strip("/"))
+                .then(slide_row_dict[k][0])
+                .otherwise(pl.col(k))
+                .alias(k)
+            )
+
+    return new_slide_df
