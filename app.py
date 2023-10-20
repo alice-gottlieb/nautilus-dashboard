@@ -18,44 +18,7 @@ slides = pl.DataFrame(
         "total_annotated_positive_negative": [13, 16],
         "image_uri": [
             "/assets/images/nautilus1_tiny.jpg",
-            "/assets/images/nautilus1_tiny.jpg",
-        ],
-    }
-)
-
-
-spots = pl.DataFrame(
-    {
-        "slide_label": ["1", "1", "2", "2"],
-        "timestamp": [
-            dt.datetime(2022, 1, 1, 12, 0, 0),
-            dt.datetime(2022, 1, 1, 12, 1, 0),
-            dt.datetime(2022, 1, 1, 12, 0, 0),
-            dt.datetime(2022, 1, 1, 12, 1, 0),
-        ],
-        "fov_id": [1, 2, 1, 2],
-        "spot_id": [1, 2, 3, 4],
-        "score": [0.5, 0.6, 0.7, 0.8],
-        # "coords_in_fov": [(10, 20), (0, 0), (30, 40), (50, 60)],
-    }
-)
-
-spots_images = pl.DataFrame(
-    {
-        "slide_label": ["1", "1", "2", "2"],
-        "timestamp": [
-            dt.datetime(2022, 1, 1, 12, 0, 0),
-            dt.datetime(2022, 1, 1, 12, 1, 0),
-            dt.datetime(2022, 1, 1, 12, 0, 0),
-            dt.datetime(2022, 1, 1, 12, 1, 0),
-        ],
-        "spot_id": [1, 2, 3, 4],
-        "image_label": ["image1", "image2", "image3", "image4"],
-        "image_uri": [
-            "/assets/images/nautilus1_tiny.jpg",
-            "/assets/images/nautilus1_tiny.jpg",
-            "/assets/images/nautilus1_tiny.jpg",
-            "/assets/images/nautilus1_tiny.jpg",
+            "/assets/images/nautilus1_small.jpg",
         ],
     }
 )
@@ -67,9 +30,6 @@ app = Dash(__name__)
 app.title = "Nautilus Dashboard"
 # set icon
 # app._favicon = "favicon.ico"
-
-# Join spots and spots_images dataframes on spot_id
-spots = spots.join(spots_images, on="spot_id", validate="1:1")
 
 # Define the layout of the app
 app.layout = html.Div(
@@ -94,17 +54,16 @@ app.layout = html.Div(
                     "border": "1px solid blue",
                 }
             ],
-            # TODO: Fix so that image path is determined by value in cell
             tooltip_data=[
                 {
                     "image_uri": {
                         "value": "![Nautilus]({})".format(
-                            dash.get_relative_path("/assets/images/nautilus1_tiny.jpg")
+                            dash.get_relative_path(row["image_uri"])
                         ),
                         "type": "markdown",
                     }
                 }
-                for row in spots.to_pandas().to_dict("records")
+                for row in slides.to_pandas().to_dict("records")
             ],
             tooltip_duration=None,
             tooltip_delay=None,
