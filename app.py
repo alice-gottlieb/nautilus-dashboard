@@ -5,6 +5,8 @@ import polars as pl
 import datetime as dt
 import plotly.express as px
 
+debug = True
+
 # TODO: Add links to different pg for each FOV table
 
 slides = pl.DataFrame(
@@ -61,14 +63,20 @@ fovs = pl.DataFrame(
 
 
 # Create the Dash app
-app = Dash(__name__)
+if debug:
+    app = Dash(__name__)
+else:
+    app = Dash(__name__, update_title=None)
 # set the title
 app.title = "Nautilus Dashboard"
 # set icon
 # app._favicon = "favicon.ico"
 
 app.layout = html.Div(
-    [dcc.Location(id="url", refresh=False), html.Div(id="page-content")]
+    [
+        dcc.Location(id="url", refresh=False),
+        html.Div(id="page-content"),
+    ]
 )
 
 # Define the layout of the app
@@ -162,4 +170,4 @@ def display_page(pathname):
 
 
 if __name__ == "__main__":
-    app.run_server(debug=True)
+    app.run_server(debug=debug)
