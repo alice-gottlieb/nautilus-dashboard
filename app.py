@@ -5,6 +5,25 @@ import polars as pl
 import datetime as dt
 import plotly.express as px
 
+slides = pl.DataFrame(
+    {
+        "slide_name": ["slide1", "slide2"],
+        "predicted_positive": [5, 6],
+        "predicted_negative": [7, 8],
+        "predicted_unsure": [9, 1],
+        "threshold": [0.4, 0.5],
+        "pos_annotated": [5, 7],
+        "neg_annotated": [8, 9],
+        "unsure_annotated": [9, 0],
+        "total_annotated_positive_negative": [13, 16],
+        "image_uri": [
+            "/assets/images/nautilus1_tiny.jpg",
+            "/assets/images/nautilus1_tiny.jpg",
+        ],
+    }
+)
+
+
 spots = pl.DataFrame(
     {
         "slide_label": ["1", "1", "2", "2"],
@@ -56,10 +75,10 @@ spots = spots.join(spots_images, on="spot_id", validate="1:1")
 app.layout = html.Div(
     [
         dash_table.DataTable(
-            id="table",
-            columns=[{"name": i, "id": i} for i in spots.columns],
-            data=spots.to_pandas().to_dict("records"),
-            row_selectable="single",
+            id="slides-table",
+            columns=[{"name": i, "id": i} for i in slides.columns],
+            data=slides.to_pandas().to_dict("records"),
+            # row_selectable="single",
             selected_rows=[],
             style_table={"overflowX": "scroll"},
             style_cell={
@@ -89,7 +108,7 @@ app.layout = html.Div(
             ],
             tooltip_duration=None,
             tooltip_delay=None,
-        )
+        ),
     ]
 )
 if __name__ == "__main__":
