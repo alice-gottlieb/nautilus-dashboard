@@ -6,9 +6,6 @@ import datetime as dt
 import plotly.express as px
 
 debug = True
-
-# TODO: Add links to different pg for each FOV table
-
 slides = pl.DataFrame(
     {
         "slide_name": ["slide1", "slide2"],
@@ -67,7 +64,8 @@ if debug:
     app = Dash(__name__)
 else:
     app = Dash(__name__, update_title=None)
-# set the title
+
+# TODO: Create dynamic title that changes based on the slide name
 app.title = "Nautilus Dashboard"
 # set icon
 # app._favicon = "favicon.ico"
@@ -149,7 +147,7 @@ def display_page(pathname):
                             tooltip_data=[
                                 {
                                     "image_uri": {
-                                        "value": "![Nautilus]({})".format(
+                                        "value": "![Slide Image]({})".format(
                                             dash.get_relative_path(row["image_uri"])
                                         ),
                                         "type": "markdown",
