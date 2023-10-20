@@ -23,6 +23,7 @@ slides = pl.DataFrame(
 )
 
 # add a column for viewing FOVs
+# leave this in even after using get_initial_slide_df for the slides table
 slides = slides.with_columns(
     pl.concat_str(
         [
@@ -58,7 +59,6 @@ fovs = pl.DataFrame(
     }
 )
 
-
 # Create the Dash app
 if debug:
     app = Dash(__name__)
@@ -67,8 +67,6 @@ else:
 
 # TODO: Create dynamic title that changes based on the slide name
 app.title = "Nautilus Dashboard"
-# set icon
-# app._favicon = "favicon.ico"
 
 app.layout = html.Div(
     [
@@ -77,12 +75,13 @@ app.layout = html.Div(
     ]
 )
 
-# Define the layout of the app
 index_page = html.Div(
     [
         dcc.Location(id="url", refresh=False),
         dash_table.DataTable(
             id="slides-table",
+            # set view_fovs to display as markdown
+            # Allows creation of a link to the FOVs page
             columns=[
                 {"id": i, "name": i, "presentation": "markdown"}
                 if i == "view_fovs"
@@ -99,6 +98,7 @@ index_page = html.Div(
                 "maxWidth": "180px",
                 "whiteSpace": "normal",
             },
+            # Show selected cell in blue
             style_data_conditional=[
                 {
                     "if": {"state": "selected"},
@@ -114,8 +114,9 @@ index_page = html.Div(
 # # Define the callback to update page-content based on the URL
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
+    # make sure pathname is not None or pointing to index
     if pathname and pathname != "/":
-        page_name = pathname.split("/")[-2]  # Extract the page number from the URL
+        page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
         # Dynamically create the content based on the page number
         page_content = html.Div(
             [
@@ -139,6 +140,7 @@ def display_page(pathname):
                                 "maxWidth": "180px",
                                 "whiteSpace": "normal",
                             },
+                            # Show selected cell in blue
                             style_data_conditional=[
                                 {
                                     "if": {"state": "selected"},
@@ -146,6 +148,7 @@ def display_page(pathname):
                                     "border": "1px solid blue",
                                 }
                             ],
+                            # show FOV image in tooltip, on hover over the image_uri column
                             tooltip_data=[
                                 {
                                     "image_uri": {
