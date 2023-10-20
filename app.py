@@ -67,9 +67,14 @@ app.title = "Nautilus Dashboard"
 # set icon
 # app._favicon = "favicon.ico"
 
-# Define the layout of the app
 app.layout = html.Div(
+    [dcc.Location(id="url", refresh=False), html.Div(id="page-content")]
+)
+
+# Define the layout of the app
+index_page = html.Div(
     [
+        dcc.Location(id="url", refresh=False),
         dash_table.DataTable(
             id="slides-table",
             columns=[
@@ -96,92 +101,64 @@ app.layout = html.Div(
                 }
             ],
         ),
-        # FOVs table
-        dash_table.DataTable(
-            id="fovs-table",
-            columns=[{"name": i, "id": i} for i in fovs.columns],
-            data=fovs.to_pandas().to_dict("records"),
-            # row_selectable="single",
-            selected_rows=[],
-            style_table={"overflowX": "scroll"},
-            style_cell={
-                "height": "auto",
-                "minWidth": "0px",
-                "maxWidth": "180px",
-                "whiteSpace": "normal",
-            },
-            style_data_conditional=[
-                {
-                    "if": {"state": "selected"},
-                    "backgroundColor": "rgba(0, 116, 217, 0.3)",
-                    "border": "1px solid blue",
-                }
-            ],
-            tooltip_data=[
-                {
-                    "image_uri": {
-                        "value": "![Nautilus]({})".format(
-                            dash.get_relative_path(row["image_uri"])
-                        ),
-                        "type": "markdown",
-                    }
-                }
-                for row in fovs.to_pandas().to_dict("records")
-            ],
-            tooltip_duration=None,
-            tooltip_delay=None,
-        ),
     ]
 )
 
-# Initialize the Dash app
-# app = dash.Dash(__name__, suppress_callback_exceptions=True)
-
-# # Define the layout of the app
-# app.layout = html.Div(
-#     [dcc.Location(id="url", refresh=False), html.Div(id="page-content")]
-# )
-
-# # Define the content for the main page
-# index_page = html.Div(
-#     [
-#         html.H1("Main Page"),
-#         html.Div(
-#             [
-#                 dcc.Link("Go to Page 1", href="/page-1"),
-#                 html.Br(),
-#                 dcc.Link("Go to Page 2", href="/page-2"),
-#             ]
-#         ),
-#     ]
-# )
-
 
 # # Define the callback to update page-content based on the URL
-# @app.callback(Output("page-content", "children"), Input("url", "pathname"))
-# def display_page(pathname):
-#     if pathname:
-#         page_number = pathname.split("-")[-1]  # Extract the page number from the URL
-
-#         # Dynamically create the content based on the page number
-#         page_content = html.Div(
-#             [
-#                 html.H1(f"Page {page_number}"),
-#                 html.Div(
-#                     [
-#                         dcc.Link("Go to Main Page", href="/"),
-#                         html.Br(),
-#                         dcc.Link(
-#                             f"Go to Page {int(page_number) % 2 + 1}",
-#                             href=f"/page-{int(page_number) % 2 + 1}",
-#                         ),
-#                     ]
-#                 ),
-#             ]
-#         )
-#         return page_content
-#     else:
-#         return index_page
+@app.callback(Output("page-content", "children"), Input("url", "pathname"))
+def display_page(pathname):
+    if pathname and pathname != "/":
+        page_name = pathname.split("/")[-2]  # Extract the page number from the URL
+        # Dynamically create the content based on the page number
+        page_content = html.Div(
+            [
+                html.H1(f"FOVs from slide: {page_name}"),
+                html.Div(
+                    [
+                        # FOVs table
+                        dash_table.DataTable(
+                            id="fovs-table",
+                            columns=[{"name": i, "id": i} for i in fovs.columns],
+                            data=fovs.filter(pl.col("slide_label") == page_name)
+                            .to_pandas()
+                            .to_dict("records"),
+                            selected_rows=[],
+                            style_table={"overflowX": "scroll"},
+                            style_cell={
+                                "height": "auto",
+                                "minWidth": "0px",
+                                "maxWidth": "180px",
+                                "whiteSpace": "normal",
+                            },
+                            style_data_conditional=[
+                                {
+                                    "if": {"state": "selected"},
+                                    "backgroundColor": "rgba(0, 116, 217, 0.3)",
+                                    "border": "1px solid blue",
+                                }
+                            ],
+                            tooltip_data=[
+                                {
+                                    "image_uri": {
+                                        "value": "![Nautilus]({})".format(
+                                            dash.get_relative_path(row["image_uri"])
+                                        ),
+                                        "type": "markdown",
+                                    }
+                                }
+                                for row in fovs.to_pandas().to_dict("records")
+                            ],
+                            tooltip_duration=None,
+                            tooltip_delay=None,
+                        ),
+                    ]
+                ),
+            ]
+        )
+        return page_content
+    else:
+        return index_page
 
 
 if __name__ == "__main__":
