@@ -9,6 +9,7 @@ JSON, via config.ini at the root of this repository.
 
 import polars as pl
 from utils.polars_helpers import hist_expr_builder
+from PIL import Image
 
 
 def get_histogram_df(file, column_name, ranges):
@@ -57,6 +58,22 @@ def get_fov_image_list(storage_service, bucket_name, slide_name):
     for b in fov_blobs:
         fov_imgs.append(b["name"])
     return fov_imgs
+
+
+def get_image(storage_service, bucket_name, slide_name, uri):
+    """
+    :brief: returns a file object corresponding to the image at the given uri
+    :param uri: uri of the image, omitting bucket name
+    """
+    prefix = slide_name
+    if not prefix.endswith("/"):
+        prefix += "/"
+    prefix += "spot_detection_result/"
+    return (
+        storage_service.objects()
+        .get_media(bucket=bucket_name, object=(prefix + uri))
+        .execute()
+    )
 
 
 def get_initial_slide_df(storage_service, bucket_name, gcs):

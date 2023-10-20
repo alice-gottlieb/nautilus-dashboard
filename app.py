@@ -14,9 +14,12 @@ from utils.demo_io import (
     get_top_level_dirs,
     populate_slide_rows,
     get_histogram_df,
+    get_image,
 )
 import polars as pl
 from gcsfs import GCSFileSystem
+from PIL import Image
+from io import BytesIO
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
@@ -151,6 +154,17 @@ index_page = html.Div(
 # # Define the callback to update page-content based on the URL
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
+    # if pathname.startswith("/image"):
+    #     image_uri = pathname.split("/image/")[1]
+    #     return html.Div(
+    #         [
+    #             html.Img(src=image_uri),  # Display the image
+    #             html.Br(),
+    #             dcc.Link(
+    #                 "Go back to table", href="/"
+    #             ),  # Link to go back to the DataTable
+    #         ]
+    #     )
     # make sure pathname is not None or pointing to index
     if pathname and pathname != "/":
         page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
@@ -183,25 +197,53 @@ def display_page(pathname):
                                 }
                             ],
                             # show FOV image in tooltip, on hover over the image_uri column
-                            tooltip_data=[
-                                {
-                                    "image_uri": {
-                                        "value": "![Slide Image]({})".format(
-                                            row[
-                                                "image_uri"
-                                            ]  # directly embedding from google, images are too big for tooltips
-                                            # dash.get_relative_path(row["image_uri"])
-                                        ),
-                                        "type": "markdown",
-                                    }
-                                }
-                                for row in fovs_df.to_pandas().to_dict("records")
-                            ],
-                            tooltip_duration=None,
-                            tooltip_delay=None,
+                            # tooltip_data=[
+                            #     {
+                            #         column: {
+                            #             "value": dcc.Link(
+                            #                 html.Img(
+                            #                     src=row[
+                            #                         "image_uri"
+                            #                     ],  # Link to your compressed image
+                            #                     style={
+                            #                         "width": "100px",
+                            #                         "height": "100px",
+                            #                     },  # Adjust width and height
+                            #                 ),
+                            #                 href=row[
+                            #                     "image_uri"
+                            #                 ],  # Link to the detailed image
+                            #             ),
+                            #             "type": "text",  # Display as text (not markdown)
+                            #         }
+                            #         for column in fovs_df.columns
+                            #     }
+                            #     for row in fovs_df.to_dict("records")
+                            # ],
+                            # tooltip_duration=None,
+                            # tooltip_delay=None,
                         ),
                     ]
                 ),
+                # html.Br(),
+                # display image
+                # html.Img(
+                #     src=get_image(
+                #         storage_service,
+                #         bucket_name,
+                #         page_name,
+                #         fovs_df["image_uri"][0].split("/")[-1],
+                #     ),
+                #     style={"width": "100px", "height": "100px"},
+                # ),
+                # px.imshow(
+                #     get_image(
+                #         storage_service,
+                #         bucket_name,
+                #         page_name,
+                #         fovs_df["image_uri"][0].split("/")[-1],
+                #     )
+                # ),
             ]
         )
         return page_content
