@@ -4,6 +4,40 @@ import pandas as pd
 import polars as pl
 import datetime as dt
 import plotly.express as px
+from google.cloud import storage
+from configparser import ConfigParser
+from google.oauth2 import service_account
+from googleapiclient.discovery import build
+from utils.demo_io import (
+    get_initial_slide_df,
+    get_fovs_df,
+    get_top_level_dirs,
+    populate_slide_rows,
+    get_histogram_df,
+)
+import polars as pl
+from gcsfs import GCSFileSystem
+
+# Parse in key and bucket name from config file
+cfp = ConfigParser()
+cfp.read("config.ini")
+
+service_account_key_json = cfp["GCS"]["gcs_storage_key"]
+gs_url = cfp["GCS"]["bucket_url"]
+
+bucket_name = gs_url.replace("gs://", "")
+
+# Define GCS file system so files can be read
+gcs = GCSFileSystem(token=service_account_key_json)
+
+# Authenticate using the service account key file
+credentials = service_account.Credentials.from_service_account_file(
+    service_account_key_json, scopes=["https://www.googleapis.com/auth/cloud-platform"]
+)
+
+# Create a storage client
+storage_service = build("storage", "v1", credentials=credentials)
+
 
 debug = True
 slides = pl.DataFrame(
@@ -21,6 +55,9 @@ slides = pl.DataFrame(
         "rbcs": [12, 13],
     }
 )
+
+
+slides = get_initial_slide_df(storage_service, bucket_name, gcs)
 
 # add a column for viewing FOVs
 # leave this in even after using get_initial_slide_df for the slides table
@@ -118,6 +155,7 @@ def display_page(pathname):
     if pathname and pathname != "/":
         page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
         # Dynamically create the content based on the page number
+        fovs_df = get_fovs_df(storage_service, bucket_name, [page_name])
         page_content = html.Div(
             [
                 html.H1(f"FOVs from slide: {page_name}"),
@@ -126,12 +164,8 @@ def display_page(pathname):
                         # FOVs table
                         dash_table.DataTable(
                             id="fovs-table",
-                            columns=[{"name": i, "id": i} for i in fovs.columns],
-                            data=fovs.filter(
-                                pl.col("slide_label") == page_name
-                            )  # Replace this line with a call to get_fovs_from_slides
-                            .to_pandas()
-                            .to_dict("records"),
+                            columns=[{"name": i, "id": i} for i in fovs_df.columns],
+                            data=fovs_df.to_pandas().to_dict("records"),
                             selected_rows=[],
                             style_table={"overflowX": "scroll"},
                             style_cell={
@@ -153,12 +187,15 @@ def display_page(pathname):
                                 {
                                     "image_uri": {
                                         "value": "![Slide Image]({})".format(
-                                            dash.get_relative_path(row["image_uri"])
+                                            row[
+                                                "image_uri"
+                                            ]  # directly embedding from google, images are too big for tooltips
+                                            # dash.get_relative_path(row["image_uri"])
                                         ),
                                         "type": "markdown",
                                     }
                                 }
-                                for row in fovs.to_pandas().to_dict("records")
+                                for row in fovs_df.to_pandas().to_dict("records")
                             ],
                             tooltip_duration=None,
                             tooltip_delay=None,

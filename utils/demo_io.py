@@ -154,6 +154,17 @@ def get_fovs_df(storage_service, bucket_name, list_of_slide_names):
         sl_fovs_dict = {}
         # get image uris
         fov_list = get_fov_image_list(storage_service, bucket_name, sl)
+
+        for i in range(
+            len(fov_list)
+        ):  # stopgap measure using the authenticated url for demo, since these images aren't public
+            fov_list[i] = (
+                "https://storage.cloud.google.com/"
+                + bucket_name.strip("/")
+                + "/"
+                + fov_list[i]
+            )
+
         sl_fovs_dict["image_uri"] = fov_list
         # same slide label for all fovs in a slide
         sl_fovs_dict["slide_label"] = [sl.strip("/")] * len(fov_list)
