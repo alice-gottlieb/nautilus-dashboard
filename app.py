@@ -33,10 +33,10 @@ spots_images = pl.DataFrame(
         "spot_id": [1, 2, 3, 4],
         "image_label": ["image1", "image2", "image3", "image4"],
         "image_uri": [
-            "images/nautilus1.jpg",
-            "images/nautilus1.jpg",
-            "images/nautilus1.jpg",
-            "images/nautilus1.jpg",
+            "/assets/images/nautilus1_tiny.jpg",
+            "/assets/images/nautilus1_tiny.jpg",
+            "/assets/images/nautilus1_tiny.jpg",
+            "/assets/images/nautilus1_tiny.jpg",
         ],
     }
 )
