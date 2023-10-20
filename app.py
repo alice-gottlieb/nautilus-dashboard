@@ -126,7 +126,9 @@ def display_page(pathname):
                         dash_table.DataTable(
                             id="fovs-table",
                             columns=[{"name": i, "id": i} for i in fovs.columns],
-                            data=fovs.filter(pl.col("slide_label") == page_name)
+                            data=fovs.filter(
+                                pl.col("slide_label") == page_name
+                            )  # Replace this line with a call to get_fovs_from_slides
                             .to_pandas()
                             .to_dict("records"),
                             selected_rows=[],
