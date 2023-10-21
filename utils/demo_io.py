@@ -12,6 +12,10 @@ from utils.polars_helpers import hist_expr_builder
 from PIL import Image
 from io import BytesIO
 
+# TODO: Pull spots data from patient_slides_analysis folder
+# File naming convention: [slide_name]_ann_w_pred.csv
+# or [slide_name].npy
+
 
 def get_histogram_df(file, column_name, ranges):
     """
