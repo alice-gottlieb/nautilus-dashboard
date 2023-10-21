@@ -3,7 +3,7 @@ Dashboard for displaying and inspecting data from slides
 
 ## Dependencies
 ```
-pip install polars gcsfs google-auth google-auth-httplib2 google-auth-oauthlib dash
+pip install polars gcsfs google-auth google-auth-httplib2 google-auth-oauthlib dash pandas
 ```
 
 ## Setup
