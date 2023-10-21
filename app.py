@@ -154,22 +154,41 @@ index_page = html.Div(
 # # Define the callback to update page-content based on the URL
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
-    # if pathname.startswith("/image"):
-    #     image_uri = pathname.split("/image/")[1]
-    #     return html.Div(
-    #         [
-    #             html.Img(src=image_uri),  # Display the image
-    #             html.Br(),
-    #             dcc.Link(
-    #                 "Go back to table", href="/"
-    #             ),  # Link to go back to the DataTable
-    #         ]
-    #     )
-    # make sure pathname is not None or pointing to index
-    if pathname and pathname != "/":
+    # view individual FOV
+    if pathname and pathname[-5:] == ".jpg/":
+        # get the slide name from the URL
+        page_name = pathname.split("/")[-4]
+        # get the image name from the URL
+        image_name = pathname.split("/")[-2]
+        # get the image from GCS
+        image = get_image(
+            storage_service, bucket_name, page_name, image_name, resize_factor=1.0
+        )
+        # # display the image
+        return html.Div(
+            [
+                html.H1(f"FOV {image_name} from slide: {page_name}"),
+                html.Br(),
+                html.Img(
+                    src=image,
+                ),
+            ]
+        )
+    # FOVs page
+    elif pathname and pathname != "/":
         page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
         # Dynamically create the content based on the page number
         fovs_df = get_fovs_df(storage_service, bucket_name, [page_name])
+
+        fovs_df = fovs_df.with_columns(
+            pl.concat_str(
+                [
+                    pl.lit("[View FOV](/"),
+                    pl.col("image_uri"),  # get the image name from the uri
+                    pl.lit("/)"),
+                ]
+            ).alias("view_fov")
+        )
         page_content = html.Div(
             [
                 html.H1(f"FOVs from slide: {page_name}"),
@@ -178,7 +197,12 @@ def display_page(pathname):
                         # FOVs table
                         dash_table.DataTable(
                             id="fovs-table",
-                            columns=[{"name": i, "id": i} for i in fovs_df.columns],
+                            columns=[
+                                {"id": i, "name": i, "presentation": "markdown"}
+                                if i == "view_fov"
+                                else {"name": i, "id": i}
+                                for i in fovs_df.columns
+                            ],
                             data=fovs_df.to_pandas().to_dict("records"),
                             selected_rows=[],
                             style_table={"overflowX": "scroll"},
@@ -199,42 +223,31 @@ def display_page(pathname):
                             # show FOV image in tooltip, on hover over the image_uri column
                             # tooltip_data=[
                             #     {
-                            #         column: {
-                            #             "value": dcc.Link(
-                            #                 html.Img(
-                            #                     src=row[
-                            #                         "image_uri"
-                            #                     ],  # Link to your compressed image
-                            #                     style={
-                            #                         "width": "100px",
-                            #                         "height": "100px",
-                            #                     },  # Adjust width and height
+                            #         "image_uri": {
+                            #             # "value": "![Slide Image]({})".format(
+                            #             #     row[
+                            #             #         "image_uri"
+                            #             #     ]  # directly embedding from google, images are too big for tooltips
+                            #             #     # dash.get_relative_path(row["image_uri"])
+                            #             # ),
+                            #             "value": html.Img(
+                            #                 src=get_image(
+                            #                     storage_service,
+                            #                     bucket_name,
+                            #                     page_name,
+                            #                     fovs_df["image_uri"][0].split("/")[-1],
+                            #                     resize_factor=0.1,
                             #                 ),
-                            #                 href=row[
-                            #                     "image_uri"
-                            #                 ],  # Link to the detailed image
                             #             ),
-                            #             "type": "text",  # Display as text (not markdown)
+                            #             "type": "markdown",
                             #         }
-                            #         for column in fovs_df.columns
                             #     }
-                            #     for row in fovs_df.to_dict("records")
+                            #     for row in fovs_df.to_pandas().to_dict("records")
                             # ],
                             # tooltip_duration=None,
                             # tooltip_delay=None,
                         ),
                     ]
-                ),
-                html.Br(),
-                # display image
-                html.Img(
-                    src=get_image(
-                        storage_service,
-                        bucket_name,
-                        page_name,
-                        fovs_df["image_uri"][0].split("/")[-1],
-                        resize_factor=0.1,
-                    ),
                 ),
             ]
         )
