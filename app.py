@@ -228,15 +228,12 @@ def display_page(pathname):
                 html.Br(),
                 # display image
                 html.Img(
-                    src=Image.open(
-                        BytesIO(
-                            get_image(
-                                storage_service,
-                                bucket_name,
-                                page_name,
-                                fovs_df["image_uri"][0].split("/")[-1],
-                            )
-                        )
+                    src=get_image(
+                        storage_service,
+                        bucket_name,
+                        page_name,
+                        fovs_df["image_uri"][0].split("/")[-1],
+                        resize_factor=0.1,
                     ),
                 ),
             ]
