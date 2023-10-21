@@ -11,6 +11,7 @@ import polars as pl
 from utils.polars_helpers import hist_expr_builder
 from PIL import Image
 from io import BytesIO
+import numpy as np
 
 
 def get_histogram_df(file, column_name, ranges):
@@ -350,4 +351,32 @@ def get_spots_csv(storage_service, bucket_name, gcs, slide_name):
             return spots_csv
     except:
         print("No spot_data_raw.csv found for " + str(slide_name))
+        return None
+
+
+def get_spots_npy(storage_service, bucket_name, gcs, slide_name):
+    """
+    :brief: returns a dataframe corresponding to the spots data for a given slide
+    :param storage_service: storage service object
+    :param bucket_name: name of bucket
+    :param slide_name: name of slide, not including bucket name
+    :return spots_npy: polars dataframe corresponding to spots data for given slide
+        Shape of npy data is (# of images, 4, 31, 31)
+            Axis 0: image number
+            Axis 1: 4 channels (A, R, G, B)
+            [Unsure if this is correct order, the final 3 appear to be RGB]
+            Axis 2: 31 pixels
+            Axis 3: 31 pixels
+        To get an RGB image, use:
+            Image.fromarray(spot_images_npy(*args)[n, 1:, :, :].T, 'RGB')
+    """
+    npy_data_raw_file_path = (
+        bucket_name.strip("/") + "/patient_slides_analysis/" + slide_name + ".npy"
+    )
+    try:
+        with gcs.open(npy_data_raw_file_path, "rb") as f:
+            spots_npy = np.load(f)
+            return spots_npy
+    except:
+        print("No npy found for " + str(slide_name))
         return None
