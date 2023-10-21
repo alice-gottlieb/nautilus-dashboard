@@ -225,25 +225,20 @@ def display_page(pathname):
                         ),
                     ]
                 ),
-                # html.Br(),
+                html.Br(),
                 # display image
-                # html.Img(
-                #     src=get_image(
-                #         storage_service,
-                #         bucket_name,
-                #         page_name,
-                #         fovs_df["image_uri"][0].split("/")[-1],
-                #     ),
-                #     style={"width": "100px", "height": "100px"},
-                # ),
-                # px.imshow(
-                #     get_image(
-                #         storage_service,
-                #         bucket_name,
-                #         page_name,
-                #         fovs_df["image_uri"][0].split("/")[-1],
-                #     )
-                # ),
+                html.Img(
+                    src=Image.open(
+                        BytesIO(
+                            get_image(
+                                storage_service,
+                                bucket_name,
+                                page_name,
+                                fovs_df["image_uri"][0].split("/")[-1],
+                            )
+                        )
+                    ),
+                ),
             ]
         )
         return page_content
