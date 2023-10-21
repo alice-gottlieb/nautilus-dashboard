@@ -124,6 +124,7 @@ app.layout = html.Div(
 index_page = html.Div(
     [
         dcc.Location(id="url", refresh=False),
+        html.H1("Nautilus Dashboard"),
         dash_table.DataTable(
             id="slides-table",
             # set view_fovs to display as markdown
