@@ -15,3 +15,8 @@ bucket_url=gs://bucket-name
 ```
 
 Modify `config.ini` such that `gcs_storage_key` points to your json GCS key, and `bucket_name` is `gs://` address of the relevant bucket.
+
+# Run #
+```
+python ./app.py
+```
