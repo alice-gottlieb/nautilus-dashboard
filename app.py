@@ -74,6 +74,9 @@ slides = slides.with_columns(
     ).alias("view_fovs")
 )
 
+# drop cols which are all null from slides
+slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
+
 # slide_label (string, unique ID for containing slide over multiple timestamps)
 # id_in_slide (int, unique ID for FOV within slide)
 # timestamp (datetime, time of slide timestep acquisition)
@@ -115,6 +118,7 @@ app.layout = html.Div(
     ]
 )
 
+# TODO: Display data from populate_slide_rows on cell/row select
 index_page = html.Div(
     [
         dcc.Location(id="url", refresh=False),

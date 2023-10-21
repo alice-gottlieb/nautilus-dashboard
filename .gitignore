@@ -164,3 +164,7 @@ cython_debug/
 
 # json key
 key.json
+
+# npy files
+*.npy
+*.npz
