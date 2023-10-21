@@ -42,22 +42,22 @@ credentials = service_account.Credentials.from_service_account_file(
 storage_service = build("storage", "v1", credentials=credentials)
 
 
-debug = True
-slides = pl.DataFrame(
-    {
-        "slide_name": ["slide1", "slide2"],
-        "predicted_positive": [5, 6],
-        "predicted_negative": [7, 8],
-        "predicted_unsure": [9, 1],
-        "threshold": [0.4, 0.5],
-        "pos_annotated": [5, 7],
-        "neg_annotated": [8, 9],
-        "unsure_annotated": [9, 0],
-        "total_annotated_positive_negative": [13, 16],
-        "fov_count": [10, 11],
-        "rbcs": [12, 13],
-    }
-)
+debug = False
+# slides = pl.DataFrame(
+#     {
+#         "slide_name": ["slide1", "slide2"],
+#         "predicted_positive": [5, 6],
+#         "predicted_negative": [7, 8],
+#         "predicted_unsure": [9, 1],
+#         "threshold": [0.4, 0.5],
+#         "pos_annotated": [5, 7],
+#         "neg_annotated": [8, 9],
+#         "unsure_annotated": [9, 0],
+#         "total_annotated_positive_negative": [13, 16],
+#         "fov_count": [10, 11],
+#         "rbcs": [12, 13],
+#     }
+# )
 
 
 slides = get_initial_slide_df(storage_service, bucket_name, gcs)
@@ -108,8 +108,10 @@ if debug:
 else:
     app = Dash(__name__, update_title=None)
 
+app._favicon = "/assets/favicon.ico"
+
 # TODO: Create dynamic title that changes based on the slide name
-app.title = "Nautilus Dashboard"
+app.title = "Cephla - Nautilus Dashboard"
 
 app.layout = html.Div(
     [
@@ -122,6 +124,8 @@ app.layout = html.Div(
 index_page = html.Div(
     [
         dcc.Location(id="url", refresh=False),
+        html.H1("Cephla"),
+        html.H2("Nautilus Dashboard"),
         dash_table.DataTable(
             id="slides-table",
             # set view_fovs to display as markdown
