@@ -111,7 +111,7 @@ else:
 app._favicon = "/assets/favicon.ico"
 
 # TODO: Create dynamic title that changes based on the slide name
-app.title = "Nautilus Dashboard"
+app.title = "Cephla - Nautilus Dashboard"
 
 app.layout = html.Div(
     [
@@ -124,7 +124,8 @@ app.layout = html.Div(
 index_page = html.Div(
     [
         dcc.Location(id="url", refresh=False),
-        html.H1("Nautilus Dashboard"),
+        html.H1("Cephla"),
+        html.H2("Nautilus Dashboard"),
         dash_table.DataTable(
             id="slides-table",
             # set view_fovs to display as markdown
