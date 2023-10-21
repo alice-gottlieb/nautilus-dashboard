@@ -12,10 +12,6 @@ from utils.polars_helpers import hist_expr_builder
 from PIL import Image
 from io import BytesIO
 
-# TODO: Pull spots data from patient_slides_analysis folder
-# File naming convention: [slide_name]_ann_w_pred.csv
-# or [slide_name].npy
-
 
 def get_histogram_df(file, column_name, ranges):
     """
@@ -329,3 +325,29 @@ def populate_slide_rows(
             )
 
     return new_slide_df
+
+
+# TODO: Pull spots data from patient_slides_analysis folder
+# npy data of form [slide_name].npy
+# npy data is currently too large to pull
+def get_spots_csv(storage_service, bucket_name, gcs, slide_name):
+    """
+    :brief: returns a dataframe corresponding to the spots data for a given slide
+    :param storage_service: storage service object
+    :param bucket_name: name of bucket
+    :param slide_name: name of slide, not including bucket name
+    :return spots_csv: polars dataframe corresponding to spots data for given slide
+    """
+    spot_data_raw_file_path = (
+        bucket_name.strip("/")
+        + "/patient_slides_analysis/"
+        + slide_name
+        + "_ann_w_pred.csv"
+    )
+    try:
+        with gcs.open(spot_data_raw_file_path, "rb") as f:
+            spots_csv = pl.read_csv(f)
+            return spots_csv
+    except:
+        print("No spot_data_raw.csv found for " + str(slide_name))
+        return None

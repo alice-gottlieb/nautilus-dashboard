@@ -115,6 +115,7 @@ app.layout = html.Div(
     ]
 )
 
+# TODO: Display data from populate_slide_rows on cell/row select
 index_page = html.Div(
     [
         dcc.Location(id="url", refresh=False),
