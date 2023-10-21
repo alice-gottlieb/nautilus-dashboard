@@ -14,9 +14,12 @@ from utils.demo_io import (
     get_top_level_dirs,
     populate_slide_rows,
     get_histogram_df,
+    get_image,
 )
 import polars as pl
 from gcsfs import GCSFileSystem
+from PIL import Image
+from io import BytesIO
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
@@ -151,11 +154,41 @@ index_page = html.Div(
 # # Define the callback to update page-content based on the URL
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
-    # make sure pathname is not None or pointing to index
-    if pathname and pathname != "/":
+    # view individual FOV
+    if pathname and pathname[-5:] == ".jpg/":
+        # get the slide name from the URL
+        page_name = pathname.split("/")[-4]
+        # get the image name from the URL
+        image_name = pathname.split("/")[-2]
+        # get the image from GCS
+        image = get_image(
+            storage_service, bucket_name, page_name, image_name, resize_factor=1.0
+        )
+        # # display the image
+        return html.Div(
+            [
+                html.H1(f"FOV {image_name} from slide: {page_name}"),
+                html.Br(),
+                html.Img(
+                    src=image,
+                ),
+            ]
+        )
+    # FOVs page
+    elif pathname and pathname != "/":
         page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
         # Dynamically create the content based on the page number
         fovs_df = get_fovs_df(storage_service, bucket_name, [page_name])
+
+        fovs_df = fovs_df.with_columns(
+            pl.concat_str(
+                [
+                    pl.lit("[View FOV](/"),
+                    pl.col("image_uri"),  # get the image name from the uri
+                    pl.lit("/)"),
+                ]
+            ).alias("view_fov")
+        )
         page_content = html.Div(
             [
                 html.H1(f"FOVs from slide: {page_name}"),
@@ -164,7 +197,12 @@ def display_page(pathname):
                         # FOVs table
                         dash_table.DataTable(
                             id="fovs-table",
-                            columns=[{"name": i, "id": i} for i in fovs_df.columns],
+                            columns=[
+                                {"id": i, "name": i, "presentation": "markdown"}
+                                if i == "view_fov"
+                                else {"name": i, "id": i}
+                                for i in fovs_df.columns
+                            ],
                             data=fovs_df.to_pandas().to_dict("records"),
                             selected_rows=[],
                             style_table={"overflowX": "scroll"},
@@ -183,22 +221,31 @@ def display_page(pathname):
                                 }
                             ],
                             # show FOV image in tooltip, on hover over the image_uri column
-                            tooltip_data=[
-                                {
-                                    "image_uri": {
-                                        "value": "![Slide Image]({})".format(
-                                            row[
-                                                "image_uri"
-                                            ]  # directly embedding from google, images are too big for tooltips
-                                            # dash.get_relative_path(row["image_uri"])
-                                        ),
-                                        "type": "markdown",
-                                    }
-                                }
-                                for row in fovs_df.to_pandas().to_dict("records")
-                            ],
-                            tooltip_duration=None,
-                            tooltip_delay=None,
+                            # tooltip_data=[
+                            #     {
+                            #         "image_uri": {
+                            #             # "value": "![Slide Image]({})".format(
+                            #             #     row[
+                            #             #         "image_uri"
+                            #             #     ]  # directly embedding from google, images are too big for tooltips
+                            #             #     # dash.get_relative_path(row["image_uri"])
+                            #             # ),
+                            #             "value": html.Img(
+                            #                 src=get_image(
+                            #                     storage_service,
+                            #                     bucket_name,
+                            #                     page_name,
+                            #                     fovs_df["image_uri"][0].split("/")[-1],
+                            #                     resize_factor=0.1,
+                            #                 ),
+                            #             ),
+                            #             "type": "markdown",
+                            #         }
+                            #     }
+                            #     for row in fovs_df.to_pandas().to_dict("records")
+                            # ],
+                            # tooltip_duration=None,
+                            # tooltip_delay=None,
                         ),
                     ]
                 ),

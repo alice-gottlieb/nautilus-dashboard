@@ -161,3 +161,6 @@ cython_debug/
 
 # Config file
 *.ini
+
+# json key
+key.json

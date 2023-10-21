@@ -9,6 +9,8 @@ JSON, via config.ini at the root of this repository.
 
 import polars as pl
 from utils.polars_helpers import hist_expr_builder
+from PIL import Image
+from io import BytesIO
 
 
 def get_histogram_df(file, column_name, ranges):
@@ -57,6 +59,37 @@ def get_fov_image_list(storage_service, bucket_name, slide_name):
     for b in fov_blobs:
         fov_imgs.append(b["name"])
     return fov_imgs
+
+
+def get_image(
+    storage_service,
+    bucket_name,
+    slide_name,
+    uri,
+    resize_factor=1.0,
+):
+    """
+    :brief: returns a file object corresponding to the image at the given uri
+    :param uri: uri of the image, omitting bucket name
+    """
+    prefix = slide_name
+    if not prefix.endswith("/"):
+        prefix += "/"
+    prefix += "spot_detection_result/"
+    image = Image.open(
+        BytesIO(
+            (
+                storage_service.objects()
+                .get_media(bucket=bucket_name, object=(prefix + uri))
+                .execute()
+            )
+        )
+    )
+    image = image.resize(
+        (int(image.size[0] * resize_factor), int(image.size[1] * resize_factor))
+    )
+    print("Got image at " + str(bucket_name) + "/" + str(slide_name) + "/" + str(uri))
+    return image
 
 
 def get_initial_slide_df(storage_service, bucket_name, gcs):
@@ -155,15 +188,15 @@ def get_fovs_df(storage_service, bucket_name, list_of_slide_names):
         # get image uris
         fov_list = get_fov_image_list(storage_service, bucket_name, sl)
 
-        for i in range(
-            len(fov_list)
-        ):  # stopgap measure using the authenticated url for demo, since these images aren't public
-            fov_list[i] = (
-                "https://storage.cloud.google.com/"
-                + bucket_name.strip("/")
-                + "/"
-                + fov_list[i]
-            )
+        # for i in range(
+        #     len(fov_list)
+        # ):  # stopgap measure using the authenticated url for demo, since these images aren't public
+        #     fov_list[i] = (
+        #         "https://storage.cloud.google.com/"
+        #         + bucket_name.strip("/")
+        #         + "/"
+        #         + fov_list[i]
+        #     )
 
         sl_fovs_dict["image_uri"] = fov_list
         # same slide label for all fovs in a slide
@@ -182,9 +215,14 @@ def get_fovs_df(storage_service, bucket_name, list_of_slide_names):
         sl_fovs_df = pl.DataFrame(sl_fovs_dict)
 
         # format timestamp column as datetime
-        sl_fovs_df = sl_fovs_df.with_columns(
-            sl_fovs_df["timestamp"].str.to_datetime("%Y-%m-%d_%H-%M-%S")
-        )
+        try:
+            sl_fovs_df = sl_fovs_df.with_columns(
+                sl_fovs_df["timestamp"].str.to_datetime("%Y-%m-%d_%H-%M-%S")
+            )
+        except:
+            print(
+                "Unable to convert timestamp column to datetime from slide name: " + sl
+            )
         # add to total fov df
         fovs = pl.concat([fovs, sl_fovs_df])
     return fovs
