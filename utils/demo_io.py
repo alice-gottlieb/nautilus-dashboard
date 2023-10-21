@@ -88,6 +88,7 @@ def get_image(
     image = image.resize(
         (int(image.size[0] * resize_factor), int(image.size[1] * resize_factor))
     )
+    print("Got image at " + str(bucket_name) + "/" + str(slide_name) + "/" + str(uri))
     return image
 
 
@@ -187,15 +188,15 @@ def get_fovs_df(storage_service, bucket_name, list_of_slide_names):
         # get image uris
         fov_list = get_fov_image_list(storage_service, bucket_name, sl)
 
-        for i in range(
-            len(fov_list)
-        ):  # stopgap measure using the authenticated url for demo, since these images aren't public
-            fov_list[i] = (
-                "https://storage.cloud.google.com/"
-                + bucket_name.strip("/")
-                + "/"
-                + fov_list[i]
-            )
+        # for i in range(
+        #     len(fov_list)
+        # ):  # stopgap measure using the authenticated url for demo, since these images aren't public
+        #     fov_list[i] = (
+        #         "https://storage.cloud.google.com/"
+        #         + bucket_name.strip("/")
+        #         + "/"
+        #         + fov_list[i]
+        #     )
 
         sl_fovs_dict["image_uri"] = fov_list
         # same slide label for all fovs in a slide
@@ -214,9 +215,14 @@ def get_fovs_df(storage_service, bucket_name, list_of_slide_names):
         sl_fovs_df = pl.DataFrame(sl_fovs_dict)
 
         # format timestamp column as datetime
-        sl_fovs_df = sl_fovs_df.with_columns(
-            sl_fovs_df["timestamp"].str.to_datetime("%Y-%m-%d_%H-%M-%S")
-        )
+        try:
+            sl_fovs_df = sl_fovs_df.with_columns(
+                sl_fovs_df["timestamp"].str.to_datetime("%Y-%m-%d_%H-%M-%S")
+            )
+        except:
+            print(
+                "Unable to convert timestamp column to datetime from slide name: " + sl
+            )
         # add to total fov df
         fovs = pl.concat([fovs, sl_fovs_df])
     return fovs
