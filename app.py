@@ -1,5 +1,6 @@
 from dash import Dash, html, dash_table, dcc, callback, Output, Input
 import dash
+import dash_bootstrap_components as dbc
 import pandas as pd
 import polars as pl
 import numpy as np
@@ -19,12 +20,15 @@ from utils.demo_io import (
     get_image,
     get_spots_csv,
     crop_spots_from_slide,
+    get_combined_spots_df,
+    pil_to_b64,
 )
 from utils.polars_helpers import get_detection_stats_vs_threshold
 import polars as pl
 from gcsfs import GCSFileSystem
 from PIL import Image
 from io import BytesIO
+from flask_caching import Cache
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
@@ -36,6 +40,27 @@ gs_url = cfp["GCS"]["bucket_url"]
 cutoff = None
 try:
     cutoff = int(cfp["TESTING"]["slide_count_cutoff"])
+except:
+    pass
+
+spot_rows_per_page = 2
+spot_columns_per_page = 5
+
+try:
+    spots_rows_per_page = int(cfp["DISPLAY"]["spot_rows_per_page"])
+except:
+    pass
+try:
+    spots_columns_per_page = int(cfp["DISPLAY"]["spot_columns_per_page"])
+except:
+    pass
+
+
+spots_per_page = spot_rows_per_page * spot_columns_per_page
+
+cache_timeout = 20
+try:
+    cache_timeout = int(cfp["DISPLAY"]["cache_timeout"])
 except:
     pass
 
@@ -149,12 +174,131 @@ fovs = pl.DataFrame(
 
 # Create the Dash app
 if debug:
-    app = Dash(__name__)
+    app = Dash(
+        __name__,
+        external_stylesheets=[dbc.themes.BOOTSTRAP],
+        suppress_callback_exceptions=True,
+    )
 else:
-    app = Dash(__name__, update_title=None, suppress_callback_exceptions=True)
+    app = Dash(
+        __name__,
+        update_title=None,
+        suppress_callback_exceptions=True,
+        external_stylesheets=[dbc.themes.BOOTSTRAP],
+    )
+
+cache = Cache(
+    app.server, config={"CACHE_TYPE": "filesystem", "CACHE_DIR": "cache-directory"}
+)
 
 
-# Define the layout of the web page
+# Create the image-(parasite output) grid layout
+def create_image_grid(slide_name, start_index, end_index, descending=True):
+    spot_imgs, scores = spot_images_and_scores(
+        slide_name, start_index, end_index, descending
+    )
+
+    spot_imgs = spot_imgs[0]
+    # spot_imgs, scores = ([Image.open("assets/images/nautilus1_tiny.jpg")],[0.99])
+    image_rows = []
+    for i in range(spot_rows_per_page):
+        image_row_list = []
+        for j in range(spot_columns_per_page):
+            try:
+                image_row_list.append(
+                    dbc.Col(
+                        dbc.Card(
+                            dbc.CardBody(
+                                [
+                                    html.Img(
+                                        src=spot_imgs[i * spot_columns_per_page + j],
+                                        style={
+                                            "width": "200px",
+                                            "image-rendering": "pixelated",
+                                        },
+                                    ),
+                                    html.P(f"{scores[i*spot_columns_per_page+j]:.2f}"),
+                                ]
+                            ),
+                            className="image-cell",
+                        )
+                    )
+                )
+            except:
+                image_row_list.append(dbc.Col(dbc.Card()))
+        image_rows.append(dbc.Row(image_row_list))
+
+    image_grid = html.Div(image_rows, className="image-grid")
+    return image_grid
+
+
+@cache.memoize(timeout=cache_timeout)
+def combined_spots_df(slide_name):
+    return get_combined_spots_df(bucket_name, gcs, slide_name)
+
+
+@cache.memoize(timeout=cache_timeout)
+def spot_images_and_scores(slide_name, id_start, id_end, descending=True):
+    spot_df = combined_spots_df(slide_name)
+    spot_df = (
+        spot_df.lazy()
+        .sort(pl.col("parasite output"), descending=descending)
+        .with_row_count()
+        .filter(
+            (pl.col("row_nr") >= pl.lit(id_start))
+            & (pl.col("row_nr") <= pl.lit(id_end))
+        )
+        .collect(streaming=True)
+    )
+    spot_coords = []
+    for spot in spot_df.rows(named=True):
+        spot_coords.append(
+            (
+                spot["FOV_row"],
+                spot["FOV_col"],
+                spot["FOV_z"],
+                spot["x"],
+                spot["y"],
+                spot["r"],
+            )
+        )
+    spot_imgs = (
+        crop_spots_from_slide(storage_service, bucket_name, slide_name, spot_coords),
+    )
+    scores = spot_df["parasite output"].to_numpy()
+    return (spot_imgs, scores)
+
+
+# Define the layout
+spot_table_layout = html.Div(
+    [
+        html.H1("Spot Display"),
+        html.P("", id="slide-name-spots", title=""),
+        html.Div(id="image-grid-container"),
+        dcc.Input(
+            id="pagination", type="text", debounce=True, placeholder="Enter page number"
+        ),
+    ]
+)
+
+
+# Callback to update the displayed items based on pagination
+@app.callback(
+    Output("image-grid-container", "children"),
+    Input("slide-name-spots", "title"),
+    Input("pagination", "value"),
+)
+def update_image_grid(slide_name, page):
+    try:
+        page = int(page)
+    except (ValueError, TypeError):
+        page = 1
+    start_index = (page - 1) * spots_per_page
+    end_index = page * spots_per_page
+    return create_image_grid(slide_name, start_index, end_index)
+
+
+# Define the layout of the chart page
 graph_layout = html.Div(
     [
         html.H1("Prediction stats vs. Threshold"),
@@ -168,18 +312,9 @@ graph_layout = html.Div(
 )
 
 
-# Define the callback function to update the line graph
-@app.callback(Output("line-plot", "figure"), [Input("y-axis-dropdown", "value")])
-def update_line_plot(selected_y_columns):
-    if selected_y_columns is None:
-        return go.Figure()
-
-    page_name = selected_y_columns[0].split("<>")[-1]
-
-    for i in range(len(selected_y_columns)):
-        selected_y_columns[i] = selected_y_columns[i].split("<>")[0]
-
-    spot_df = get_spots_csv(bucket_name, gcs, page_name)
+@cache.memoize(timeout=cache_timeout)
+def get_plot_df(slide_name):
+    spot_df = get_spots_csv(bucket_name, gcs, slide_name)
     thresholds = np.linspace(0.0, 1.0, 200, endpoint=False)
     plot_df = get_detection_stats_vs_threshold(spot_df, thresholds)
     spot_count = len(spot_df)
@@ -198,6 +333,22 @@ def update_line_plot(selected_y_columns):
         )
 
     plot_df = plot_df.to_pandas()
+
+    return plot_df
+
+
+# Define the callback function to update the line graph
+@app.callback(Output("line-plot", "figure"), [Input("y-axis-dropdown", "value")])
+def update_line_plot(selected_y_columns):
+    if selected_y_columns is None or len(selected_y_columns) == 0:
+        return go.Figure()
+
+    page_name = selected_y_columns[0].split("<>")[-1]
+
+    for i in range(len(selected_y_columns)):
+        selected_y_columns[i] = selected_y_columns[i].split("<>")[0]
+
+    plot_df = get_plot_df(page_name)
 
     fig = go.Figure()
     for column in selected_y_columns:
@@ -373,27 +524,7 @@ def display_page(pathname):
         return page_content
     elif pathname and pathname != "/" and "chartsview_" in pathname:
         page_name = pathname.split("/")[-2].strip("chartsview_")
-        spot_df = get_spots_csv(bucket_name, gcs, page_name)
-        thresholds = np.linspace(0.0, 1.0, 200, endpoint=False)
-        plot_df = get_detection_stats_vs_threshold(spot_df, thresholds)
-        spot_count = len(spot_df)
-        plot_df = plot_df.with_columns(
-            (pl.col("predicted_positive") / pl.lit(spot_count)).alias("positive_rate"),
-            (pl.col("predicted_negative") / pl.lit(spot_count)).alias("negative_rate"),
-        )
-        if plot_df["total_annotated_positive_negative"].item(0) > 0:
-            plot_df = plot_df.with_columns(
-                (
-                    pl.col("false_positive")
-                    / pl.col("total_annotated_positive_negative")
-                ).alias("false_positive_rate"),
-                (
-                    pl.col("false_negative")
-                    / pl.col("total_annotated_positive_negative")
-                ).alias("false_negative_rate"),
-            )
-
-        plot_df = plot_df.to_pandas()
+        plot_df = get_plot_df(page_name)
 
         page_content = graph_layout
         columns = list(plot_df.columns)
@@ -402,6 +533,13 @@ def display_page(pathname):
         ]
         page_content.children[1].options = column_options
         return page_content
+    elif pathname and pathname != "/" and "spotsview_" in pathname:
+        page_name = pathname.split("/")[-2].strip("spotsview_")
+        page_layout = spot_table_layout
+        page_layout.children[1] = html.P(
+            page_name + " Spots", id="slide-name-spots", title=page_name
+        )
+        return page_layout
     else:
         return index_page
 

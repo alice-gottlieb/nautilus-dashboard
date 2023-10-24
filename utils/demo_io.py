@@ -12,6 +12,7 @@ from utils.polars_helpers import hist_expr_builder, get_results_from_threshold
 from PIL import Image
 from io import BytesIO
 import numpy as np
+import base64
 
 
 def list_blobs_with_prefix(
@@ -158,6 +159,13 @@ def crop_spots_from_slide(storage_service, bucket_name, slide_name, coord_list):
         for spot_img, global_index in zip(fov_images, fov_spot_indices[fov]):
             spot_imgs[global_index] = spot_img
     return spot_imgs
+
+
+def pil_to_b64(im, enc_format="png", **kwargs):
+    buff = BytesIO()
+    im.save(buff, format=enc_format, **kwargs)
+    encoded = base64.b64encode(buff.getvalue()).decode("utf-8")
+    return encoded
 
 
 def crop_spots_from_fov(

@@ -3,12 +3,16 @@ Dashboard for displaying and inspecting data from slides
 
 ## Dependencies
 ```
-pip install polars gcsfs google-auth google-auth-httplib2 google-auth-oauthlib dash
+pip install polars gcsfs google-auth google-auth-httplib2 google-auth-oauthlib dash Flask-Caching dash-bootstrap-components
 ```
 
 ## Setup
 Create a `config.ini` file in the top directory of this repo with the following content:
 ```
+[DISPLAY
+spots_rows_per_page=2
+spot_columns_per_page=5
+
 [GCS]
 gcs_storage_key=/path/to/your/gcs/key.json
 bucket_url=gs://bucket-name
@@ -23,5 +27,5 @@ Additionally, set `cutoff` to a low number if testing things out.
 
 # Run #
 ```
-python ./app.py
+python app.py
 ```
