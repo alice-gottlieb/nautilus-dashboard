@@ -9,7 +9,7 @@ from configparser import ConfigParser
 from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from utils.demo_io import (
-    get_initial_slide_df,
+    get_initial_slide_df_with_predictions_only,
     get_fovs_df,
     get_top_level_dirs,
     populate_slide_rows,
@@ -29,6 +29,8 @@ service_account_key_json = cfp["GCS"]["gcs_storage_key"]
 gs_url = cfp["GCS"]["bucket_url"]
 
 bucket_name = gs_url.replace("gs://", "")
+
+client = storage.Client.from_service_account_json(service_account_key_json)
 
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
@@ -60,7 +62,7 @@ slides = pl.DataFrame(
 )
 
 
-slides = get_initial_slide_df(storage_service, bucket_name, gcs)
+slides = get_initial_slide_df_with_predictions_only(client, bucket_name, gcs, cutoff=10)
 
 # add a column for viewing FOVs
 # leave this in even after using get_initial_slide_df for the slides table
@@ -75,7 +77,7 @@ slides = slides.with_columns(
 )
 
 # drop cols which are all null from slides
-slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
+# slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
 
 # slide_label (string, unique ID for containing slide over multiple timestamps)
 # id_in_slide (int, unique ID for FOV within slide)
@@ -182,7 +184,7 @@ def display_page(pathname):
     elif pathname and pathname != "/":
         page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
         # Dynamically create the content based on the page number
-        fovs_df = get_fovs_df(storage_service, bucket_name, [page_name])
+        fovs_df = get_fovs_df(client, bucket_name, [page_name])
 
         fovs_df = fovs_df.with_columns(
             pl.concat_str(
