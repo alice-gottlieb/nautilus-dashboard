@@ -8,7 +8,7 @@ JSON, via config.ini at the root of this repository.
 """
 
 import polars as pl
-from utils.polars_helpers import hist_expr_builder
+from utils.polars_helpers import hist_expr_builder, get_results_from_threshold
 from PIL import Image
 from io import BytesIO
 import numpy as np
@@ -506,29 +506,11 @@ def populate_slide_rows(
                 except:
                     print("no spot_data_raw.csv found for " + str(sl))
 
-        if (
-            thresh is not None
-        ):  # compute new prediction counts if threshold has been changed
-            #### NOTE: Need to ask about how a prediction is deemed to be "unsure"
-            unsure_lower = thresh * 0.95
-            unsure_upper = thresh * 1.05
-            if unsure_upper >= 1.0:
-                unsure_upper = 0.99
-            if unsure_lower <= 0:
-                unsure_lower = 0.01
-            threshold_ranges = [
-                (0.0, unsure_lower),
-                (unsure_lower, unsure_upper),
-                (unsure_upper, 1.0),
-            ]
-            ### Basically trying to get number of spots  below the unsure range, in the unsure
-            ### range, and above the unsure range. Need to ask Rinni how to populate these
-            with gcs.open(spot_data_raw_file_path, "rb") as f:
-                try:
-                    hist_df = get_histogram_df(f, "R", threshold_ranges)
-                    print(hist_df)
-                except:
-                    print("We still don't know how to populate prediction counts?")
+        if thresh is not None:
+            spot_df = get_spots_csv(bucket_name, gcs, sl)
+            results = get_results_from_threshold(spot_df, thresh)
+            for k in results.keys():
+                slide_row_dict[k] = results[k]
 
         ### update row in dataframe to be returned
         for k in slide_row_dict.keys():

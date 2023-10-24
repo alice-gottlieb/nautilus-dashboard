@@ -28,6 +28,12 @@ cfp.read("config.ini")
 service_account_key_json = cfp["GCS"]["gcs_storage_key"]
 gs_url = cfp["GCS"]["bucket_url"]
 
+cutoff = None
+try:
+    cutoff = int(cfp["TESTING"]["slide_count_cutoff"])
+except:
+    pass
+
 bucket_name = gs_url.replace("gs://", "")
 
 client = storage.Client.from_service_account_json(service_account_key_json)
@@ -62,7 +68,9 @@ slides = pl.DataFrame(
 )
 
 
-slides = get_initial_slide_df_with_predictions_only(client, bucket_name, gcs, cutoff=10)
+slides = get_initial_slide_df_with_predictions_only(
+    client, bucket_name, gcs, cutoff=cutoff
+)
 
 # add a column for viewing FOVs
 # leave this in even after using get_initial_slide_df for the slides table
@@ -131,6 +139,8 @@ index_page = html.Div(
             columns=[
                 {"id": i, "name": i, "presentation": "markdown"}
                 if i == "view_fovs"
+                else {"name": i, "id": i, "editable": True}
+                if i == "threshold"
                 else {"name": i, "id": i}
                 for i in slides.columns
             ],
