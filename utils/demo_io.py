@@ -124,6 +124,68 @@ def get_fov_image_list(client, bucket_name, slide_name):
     return fov_imgs
 
 
+def crop_spots_from_slide(storage_service, bucket_name, slide_name, coord_list):
+    """
+    :brief: returns a list of file objects corresponding to spots cropped from
+        various FOVs in the same slide
+    :param coord_list: list of integer 6-tuples in the form (fov_row, fov_col,
+        fov_z, x, y, r) where the relevant fov image is
+        [fov_row]_[fov_col]_[fov_z].jpg and (x,y,r) are integer 3-tuples
+        where x and y are the center coordinate of the spot in pixels in the FOV
+        and r is half the side length of the square in pixels
+    :return: list of file objects corresponding to cropped images of the spots
+    """
+    spot_imgs = []
+    fov_spot_indices = {}
+    fov_spot_coord_lists = {}
+    spot_index = 0
+    for row, col, z, x, y, r in coord_list:  # set up individual lists of spots in
+        # FOVs
+        spot_imgs.append(None)
+        fov_filename = str(row) + "_" + str(col) + "_" + str(z)
+        try:
+            fov_spot_indices[fov_filename].append(spot_index)
+            fov_spot_coord_lists[fov_filename].append((x, y, r))
+        except:  # new FOV encountered
+            fov_spot_indices[fov_filename] = [spot_index]
+            fov_spot_coord_lists[fov_filename] = [(x, y, r)]
+        spot_index += 1
+    for fov in fov_spot_coord_lists.keys():
+        fov_uri = fov + ".jpg"
+        fov_images = crop_spots_from_fov(
+            storage_service, bucket_name, slide_name, fov_uri, fov_spot_coord_lists[fov]
+        )
+        for spot_img, global_index in zip(fov_images, fov_spot_indices[fov]):
+            spot_imgs[global_index] = spot_img
+    return spot_imgs
+
+
+def crop_spots_from_fov(
+    storage_service, bucket_name, slide_name, uri, coord_and_radius_list
+):
+    """
+    :brief: returns a list of file objects corresponding to spots cropped from
+        the FOV at uri
+    :param uri: image uri of the FOV, omitting bucket/slide name and
+        spot_detection_result directory name
+    :param coord_and_radius_list: list of integer 3-tuples in the form (x,y,r)
+        where x and y are the center coordinates of the spot in pixels in the
+        FOV and r is half side length of the square in pixels
+    :return: list of file objects corresponding to cropped images of the spots
+    """
+    image = get_image(storage_service, bucket_name, slide_name, uri)
+    spot_images = []
+    for x, y, r in coord_and_radius_list:
+        left = x - r
+        top = y - r
+        right = x + r
+        bottom = y + r
+
+        spot_image = image.crop((left, top, right, bottom))
+        spot_images.append(spot_image)
+    return spot_images
+
+
 def get_image(
     storage_service,
     bucket_name,
@@ -482,6 +544,24 @@ def populate_slide_rows(
     return new_slide_df
 
 
+def get_mapping_csv(bucket_name, gcs, slide_name):
+    """
+    :brief: returns a dataframe corresponding to the spot_data_raw.csv (which has coordinates and radii for a given spot)
+    :param bucket_name: name of bucket
+    :param gcs: GCS file system object
+    :param slide_name: name of slide, not including bucket name
+    :return spots_csv: polars dataframe corresponding to raw spot data for given slide
+    """
+    spot_data_raw_file_path = bucket_name.strip("/") + "/" + slide_name + "/mapping.csv"
+    try:
+        with gcs.open(spot_data_raw_file_path, "rb") as f:
+            spots_csv = pl.read_csv(f)
+            return spots_csv
+    except:
+        print("No mapping.csv found for " + str(slide_name))
+        return None
+
+
 # TODO: Pull spots data from patient_slides_analysis folder
 # npy data of form [slide_name].npy
 # npy data is currently too large to pull
@@ -504,8 +584,24 @@ def get_spots_csv(bucket_name, gcs, slide_name):
             spots_csv = pl.read_csv(f)
             return spots_csv
     except:
-        print("No spot_data_raw.csv found for " + str(slide_name))
+        print("No annotation/prediction csv found for " + str(slide_name))
         return None
+
+
+def get_combined_spots_df(bucket_name, gcs, slide_name):
+    """
+    :brief: returns a dataframe corresponding to spots data for a given slide
+        that has been combined to also have prediction scores
+    """
+    mapping_df = get_mapping_csv(bucket_name, gcs, slide_name)
+    spot_data_df = get_spots_csv(bucket_name, gcs, slide_name)
+    spot_data_df = spot_data_df.sort(pl.col("index"))
+    ### Hacky version because global_index randomly has large offsets
+    ### or multipliers for some slides? This relies on mapping.csv having
+    ### global_index sorted by the index of the spot, which seems like
+    ### a reasonable assumption when they're always the same length
+    combined_spots_df = pl.concat([spot_data_df, mapping_df], how="horizontal")
+    return combined_spots_df
 
 
 def get_spots_npy(bucket_name, gcs, slide_name):
