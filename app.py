@@ -85,7 +85,6 @@ slides = get_initial_slide_df_with_predictions_only(
     client, bucket_name, gcs, cutoff=cutoff
 )
 
-plot_df = None
 
 # add a column for viewing FOVs
 # leave this in even after using get_initial_slide_df for the slides table
@@ -158,7 +157,7 @@ else:
 # Define the layout of the web page
 graph_layout = html.Div(
     [
-        html.H1("Line Graph of Columns vs. Threshold"),
+        html.H1("Prediction stats vs. Threshold"),
         dcc.Dropdown(
             id="y-axis-dropdown",
             multi=True,  # Allow multiple selections
@@ -175,6 +174,31 @@ def update_line_plot(selected_y_columns):
     if selected_y_columns is None:
         return go.Figure()
 
+    page_name = selected_y_columns[0].split("<>")[-1]
+
+    for i in range(len(selected_y_columns)):
+        selected_y_columns[i] = selected_y_columns[i].split("<>")[0]
+
+    spot_df = get_spots_csv(bucket_name, gcs, page_name)
+    thresholds = np.linspace(0.0, 1.0, 200, endpoint=False)
+    plot_df = get_detection_stats_vs_threshold(spot_df, thresholds)
+    spot_count = len(spot_df)
+    plot_df = plot_df.with_columns(
+        (pl.col("predicted_positive") / pl.lit(spot_count)).alias("positive_rate"),
+        (pl.col("predicted_negative") / pl.lit(spot_count)).alias("negative_rate"),
+    )
+    if plot_df["total_annotated_positive_negative"].item(0) > 0:
+        plot_df = plot_df.with_columns(
+            (
+                pl.col("false_positive") / pl.col("total_annotated_positive_negative")
+            ).alias("false_positive_rate"),
+            (
+                pl.col("false_negative") / pl.col("total_annotated_positive_negative")
+            ).alias("false_negative_rate"),
+        )
+
+    plot_df = plot_df.to_pandas()
+
     fig = go.Figure()
     for column in selected_y_columns:
         fig.add_trace(
@@ -187,7 +211,7 @@ def update_line_plot(selected_y_columns):
         )
 
     fig.update_layout(
-        title="Line Graph of Columns vs. Threshold",
+        title="Plot of prediction stats for " + str(page_name) + " vs. Threshold",
         xaxis_title="Threshold",
         yaxis_title="Value",
     )
@@ -351,7 +375,6 @@ def display_page(pathname):
         page_name = pathname.split("/")[-2].strip("chartsview_")
         spot_df = get_spots_csv(bucket_name, gcs, page_name)
         thresholds = np.linspace(0.0, 1.0, 200, endpoint=False)
-        global plot_df
         plot_df = get_detection_stats_vs_threshold(spot_df, thresholds)
         spot_count = len(spot_df)
         plot_df = plot_df.with_columns(
@@ -372,10 +395,13 @@ def display_page(pathname):
 
         plot_df = plot_df.to_pandas()
 
+        page_content = graph_layout
         columns = list(plot_df.columns)
-        column_options = [{"label": col, "value": col} for col in columns]
-        graph_layout.children[1].options = column_options
-        return graph_layout
+        column_options = [
+            {"label": col, "value": col + "<>" + page_name} for col in columns
+        ]
+        page_content.children[1].options = column_options
+        return page_content
     else:
         return index_page
 
