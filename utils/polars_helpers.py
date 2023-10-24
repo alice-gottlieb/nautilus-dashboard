@@ -256,7 +256,7 @@ def get_detection_stats_vs_threshold(
         "annotation"
     :param thresholds array: numpy ndarray of thresholds
     """
-    plot_df = pl.Dataframe({"threshold": thresholds_array})
+    plot_df = pl.DataFrame({"threshold": thresholds_array})
 
     # create a dictionary of pl.Expr for each condition we want to count
     expr_dict = {

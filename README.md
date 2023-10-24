@@ -15,6 +15,7 @@ bucket_url=gs://bucket-name
 
 [TESTING]
 cutoff=10
+debug=True
 ```
 
 Modify `config.ini` such that `gcs_storage_key` points to your json GCS key, and `bucket_name` is `gs://` address of the relevant bucket.

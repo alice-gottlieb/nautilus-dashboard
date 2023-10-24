@@ -2,8 +2,10 @@ from dash import Dash, html, dash_table, dcc, callback, Output, Input
 import dash
 import pandas as pd
 import polars as pl
+import numpy as np
 import datetime as dt
 import plotly.express as px
+import plotly.graph_objs as go
 from google.cloud import storage
 from configparser import ConfigParser
 from google.oauth2 import service_account
@@ -15,7 +17,10 @@ from utils.demo_io import (
     populate_slide_rows,
     get_histogram_df,
     get_image,
+    get_spots_csv,
+    crop_spots_from_slide,
 )
+from utils.polars_helpers import get_detection_stats_vs_threshold
 import polars as pl
 from gcsfs import GCSFileSystem
 from PIL import Image
@@ -38,6 +43,15 @@ bucket_name = gs_url.replace("gs://", "")
 
 client = storage.Client.from_service_account_json(service_account_key_json)
 
+debug = False
+
+try:
+    debug = cfp["TESTING"]["debug"]
+    if debug == "true" or debug == "True":
+        debug = True
+except:
+    pass
+
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
 
@@ -50,7 +64,6 @@ credentials = service_account.Credentials.from_service_account_file(
 storage_service = build("storage", "v1", credentials=credentials)
 
 
-debug = True
 slides = pl.DataFrame(
     {
         "slide_name": ["slide1", "slide2"],
@@ -72,17 +85,39 @@ slides = get_initial_slide_df_with_predictions_only(
     client, bucket_name, gcs, cutoff=cutoff
 )
 
+plot_df = None
+
 # add a column for viewing FOVs
 # leave this in even after using get_initial_slide_df for the slides table
 slides = slides.with_columns(
     pl.concat_str(
         [
-            pl.lit("[View FOVs](/"),
+            pl.lit("[View Charts](/"),
+            pl.lit("chartsview_"),
             pl.col("slide_name"),
             pl.lit("/)"),
         ]
-    ).alias("view_fovs")
+    ).alias("view_charts"),
+    pl.concat_str(
+        [
+            pl.lit("[View Spots](/"),
+            pl.lit("spotsview_"),
+            pl.col("slide_name"),
+            pl.lit("/)"),
+        ]
+    ).alias("view_spots"),
+    pl.concat_str(
+        [
+            pl.lit("[View FOVs](/"),
+            pl.lit("fovsview_"),
+            pl.col("slide_name"),
+            pl.lit("/)"),
+        ]
+    ).alias("view_fovs"),
 )
+
+
+slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
 
 # drop cols which are all null from slides
 # slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
@@ -112,11 +147,53 @@ fovs = pl.DataFrame(
     }
 )
 
+
 # Create the Dash app
 if debug:
     app = Dash(__name__)
 else:
-    app = Dash(__name__, update_title=None)
+    app = Dash(__name__, update_title=None, suppress_callback_exceptions=True)
+
+
+# Define the layout of the web page
+graph_layout = html.Div(
+    [
+        html.H1("Line Graph of Columns vs. Threshold"),
+        dcc.Dropdown(
+            id="y-axis-dropdown",
+            multi=True,  # Allow multiple selections
+            placeholder="Select Y-Axis",
+        ),
+        dcc.Graph(id="line-plot"),
+    ]
+)
+
+
+# Define the callback function to update the line graph
+@app.callback(Output("line-plot", "figure"), [Input("y-axis-dropdown", "value")])
+def update_line_plot(selected_y_columns):
+    if selected_y_columns is None:
+        return go.Figure()
+
+    fig = go.Figure()
+    for column in selected_y_columns:
+        fig.add_trace(
+            go.Scatter(
+                x=plot_df["threshold"],
+                y=plot_df[column],
+                mode="lines+markers",
+                name=column,
+            )
+        )
+
+    fig.update_layout(
+        title="Line Graph of Columns vs. Threshold",
+        xaxis_title="Threshold",
+        yaxis_title="Value",
+    )
+
+    return fig
+
 
 # TODO: Create dynamic title that changes based on the slide name
 app.title = "Nautilus Dashboard"
@@ -138,7 +215,7 @@ index_page = html.Div(
             # Allows creation of a link to the FOVs page
             columns=[
                 {"id": i, "name": i, "presentation": "markdown"}
-                if i == "view_fovs"
+                if i in ["view_fovs", "view_charts", "view_spots"]
                 else {"name": i, "id": i, "editable": True}
                 if i == "threshold"
                 else {"name": i, "id": i}
@@ -191,8 +268,10 @@ def display_page(pathname):
             ]
         )
     # FOVs page
-    elif pathname and pathname != "/":
-        page_name = pathname.split("/")[-2]  # Extract the slide name from the URL
+    elif pathname and pathname != "/" and "fovsview_" in pathname:
+        page_name = pathname.split("/")[-2].strip(
+            "fovsview_"
+        )  # Extract the slide name from the URL
         # Dynamically create the content based on the page number
         fovs_df = get_fovs_df(client, bucket_name, [page_name])
 
@@ -268,6 +347,35 @@ def display_page(pathname):
             ]
         )
         return page_content
+    elif pathname and pathname != "/" and "chartsview_" in pathname:
+        page_name = pathname.split("/")[-2].strip("chartsview_")
+        spot_df = get_spots_csv(bucket_name, gcs, page_name)
+        thresholds = np.linspace(0.0, 1.0, 200, endpoint=False)
+        global plot_df
+        plot_df = get_detection_stats_vs_threshold(spot_df, thresholds)
+        spot_count = len(spot_df)
+        plot_df = plot_df.with_columns(
+            (pl.col("predicted_positive") / pl.lit(spot_count)).alias("positive_rate"),
+            (pl.col("predicted_negative") / pl.lit(spot_count)).alias("negative_rate"),
+        )
+        if plot_df["total_annotated_positive_negative"].item(0) > 0:
+            plot_df = plot_df.with_columns(
+                (
+                    pl.col("false_positive")
+                    / pl.col("total_annotated_positive_negative")
+                ).alias("false_positive_rate"),
+                (
+                    pl.col("false_negative")
+                    / pl.col("total_annotated_positive_negative")
+                ).alias("false_negative_rate"),
+            )
+
+        plot_df = plot_df.to_pandas()
+
+        columns = list(plot_df.columns)
+        column_options = [{"label": col, "value": col} for col in columns]
+        graph_layout.children[1].options = column_options
+        return graph_layout
     else:
         return index_page
 
