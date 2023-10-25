@@ -89,7 +89,7 @@ credentials = service_account.Credentials.from_service_account_file(
 storage_service = build("storage", "v1", credentials=credentials)
 
 
-slides = pl.DataFrame(
+slides_placeholder = pl.DataFrame(
     {
         "slide_name": ["slide1", "slide2"],
         "predicted_positive": [5, 6],
@@ -105,46 +105,6 @@ slides = pl.DataFrame(
     }
 )
 
-
-slides = get_initial_slide_df_with_predictions_only(
-    client, bucket_name, gcs, cutoff=cutoff
-)
-
-
-# add a column for viewing FOVs
-# leave this in even after using get_initial_slide_df for the slides table
-slides = slides.with_columns(
-    pl.concat_str(
-        [
-            pl.lit("[View Charts](/"),
-            pl.lit("chartsview_"),
-            pl.col("slide_name"),
-            pl.lit("/)"),
-        ]
-    ).alias("view_charts"),
-    pl.concat_str(
-        [
-            pl.lit("[View Spots](/"),
-            pl.lit("spotsview_"),
-            pl.col("slide_name"),
-            pl.lit("/)"),
-        ]
-    ).alias("view_spots"),
-    pl.concat_str(
-        [
-            pl.lit("[View FOVs](/"),
-            pl.lit("fovsview_"),
-            pl.col("slide_name"),
-            pl.lit("/)"),
-        ]
-    ).alias("view_fovs"),
-)
-
-
-slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
-
-# drop cols which are all null from slides
-# slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
 
 # slide_label (string, unique ID for containing slide over multiple timestamps)
 # id_in_slide (int, unique ID for FOV within slide)
@@ -190,6 +150,14 @@ else:
 cache = Cache(
     app.server, config={"CACHE_TYPE": "filesystem", "CACHE_DIR": "cache-directory"}
 )
+
+
+@cache.memoize(timeout=(cache_timeout + 20) * 10)
+def slide_df_cached(my_cutoff):
+    slides = get_initial_slide_df_with_predictions_only(
+        client, bucket_name, gcs, cutoff=my_cutoff
+    )
+    return slides
 
 
 # Create the image-(parasite output) grid layout
@@ -385,40 +353,9 @@ app.layout = html.Div(
 # TODO: Display data from populate_slide_rows on cell/row select
 index_page = html.Div(
     [
-        dcc.Location(id="url", refresh=False),
         html.H1("Cephla"),
         html.H2("Nautilus Dashboard"),
-        dash_table.DataTable(
-            id="slides-table",
-            # set view_fovs to display as markdown
-            # Allows creation of a link to the FOVs page
-            columns=[
-                {"id": i, "name": i, "presentation": "markdown"}
-                if i in ["view_fovs", "view_charts", "view_spots"]
-                else {"name": i, "id": i, "editable": True}
-                if i == "threshold"
-                else {"name": i, "id": i}
-                for i in slides.columns
-            ],
-            data=slides.to_pandas().to_dict("records"),
-            # row_selectable="single",
-            selected_rows=[],
-            style_table={"overflowX": "scroll"},
-            style_cell={
-                "height": "auto",
-                "minWidth": "0px",
-                "maxWidth": "180px",
-                "whiteSpace": "normal",
-            },
-            # Show selected cell in blue
-            style_data_conditional=[
-                {
-                    "if": {"state": "selected"},
-                    "backgroundColor": "rgba(0, 116, 217, 0.3)",
-                    "border": "1px solid blue",
-                }
-            ],
-        ),
+        html.H3("Table Placeholder", id="slides-table"),
     ]
 )
 
@@ -426,6 +363,7 @@ index_page = html.Div(
 # # Define the callback to update page-content based on the URL
 @app.callback(Output("page-content", "children"), Input("url", "pathname"))
 def display_page(pathname):
+    print("display_page called")
     # view individual FOV
     if pathname and pathname[-5:] == ".jpg/":
         # get the slide name from the URL
@@ -545,7 +483,85 @@ def display_page(pathname):
         )
         return page_layout
     else:
-        return index_page
+        slides = slide_df_cached(cutoff)
+        # add a column for viewing FOVs/spots/charts
+        # leave this in even after using get_initial_slide_df for the slides table
+        slides = slides.with_columns(
+            pl.concat_str(
+                [
+                    pl.lit("[View Charts](/"),
+                    pl.lit("chartsview_"),
+                    pl.col("slide_name"),
+                    pl.lit("/)"),
+                ]
+            ).alias("view_charts"),
+            pl.concat_str(
+                [
+                    pl.lit("[View Spots](/"),
+                    pl.lit("spotsview_"),
+                    pl.col("slide_name"),
+                    pl.lit("/)"),
+                ]
+            ).alias("view_spots"),
+            pl.concat_str(
+                [
+                    pl.lit("[View FOVs](/"),
+                    pl.lit("fovsview_"),
+                    pl.col("slide_name"),
+                    pl.lit("/)"),
+                ]
+            ).alias("view_fovs"),
+        )
+
+        # drop cols which are all null from slides
+        slides = slides[
+            [s.name for s in slides if not (s.null_count() == slides.height)]
+        ]
+
+        page_layout = index_page
+
+        page_layout.children[2] = dash_table.DataTable(
+            id="slides-table",
+            # set view_fovs to display as markdown
+            # Allows creation of a link to the FOVs page
+            columns=[
+                {"id": i, "name": i, "presentation": "markdown"}
+                if i in ["view_fovs", "view_charts", "view_spots"]
+                else {"name": i, "id": i, "selectable": True, "editable": True}
+                if i == "threshold"
+                else {"name": i, "id": i, "selectable": True}
+                for i in slides.columns
+            ],
+            data=slides.to_pandas().to_dict("records"),
+            # row_selectable="single",
+            style_table={"overflowX": "scroll"},
+            style_cell={
+                "height": "auto",
+                "minWidth": "0px",
+                "maxWidth": "180px",
+                "whiteSpace": "normal",
+            },
+            # Show selected cell in blue
+            style_data_conditional=[
+                {
+                    "if": {"state": "selected"},
+                    "backgroundColor": "rgba(0, 116, 217, 0.3)",
+                    "border": "1px solid blue",
+                }
+            ],
+            filter_action="native",
+            sort_action="native",
+            sort_mode="multi",
+            column_selectable="single",
+            row_selectable="multi",
+            selected_columns=[],
+            selected_rows=[],
+            page_action="native",
+            page_current=0,
+            page_size=5,
+        )
+
+        return page_layout
 
 
 if __name__ == "__main__":
