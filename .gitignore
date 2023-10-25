@@ -168,6 +168,9 @@ key.json
 # cache directory
 cache-directory/
 
+# slide df cache
+slide_df_cache
+
 # npy files
 *.npy
 *.npz

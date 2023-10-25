@@ -97,6 +97,7 @@ def get_top_level_dirs(
         "patient_slides_analysis/",
         "slide-overview/",
         "spot_detection_result/",
+        "patient_slides_annotation",
     ],
 ):
     """
@@ -518,7 +519,7 @@ def populate_slide_rows(
             spot_df = get_spots_csv(bucket_name, gcs, sl)
             results = get_results_from_threshold(spot_df, thresh)
             for k in results.keys():
-                slide_row_dict[k] = results[k]
+                slide_row_dict[k] = [results[k]]
 
         ### update row in dataframe to be returned
         for k in slide_row_dict.keys():
