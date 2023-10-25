@@ -214,7 +214,7 @@ def get_results_from_threshold(
         .select(pl.count())
         .item()
     )
-    pred_unsure = spot_df.select(pl.count).item() - pred_pos - pred_neg
+    pred_unsure = spot_df.select(pl.count()).item() - pred_pos - pred_neg
     ann_pos = (
         spot_df.filter(pl.col("annotation") == ann_dict["parasite"])
         .select(pl.count())
