@@ -3,7 +3,7 @@ Dashboard for displaying and inspecting data from slides
 
 ## Dependencies
 ```
-pip install polars gcsfs google-auth google-auth-httplib2 google-auth-oauthlib dash Flask-Caching dash-bootstrap-components google-api-python-client pillow zarr
+pip install polars gcsfs google-auth google-auth-httplib2 google-auth-oauthlib dash Flask-Caching dash-bootstrap-components google-api-python-client pillow zarr dash-auth
 ```
 
 ## Setup
