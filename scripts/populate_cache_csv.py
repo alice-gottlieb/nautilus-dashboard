@@ -4,6 +4,7 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from utils.demo_io import (
     get_initial_slide_df_with_predictions_only,
+    get_initial_slide_df,
     get_fovs_df,
     get_top_level_dirs,
     populate_slide_rows,
@@ -19,17 +20,17 @@ from gcsfs import GCSFileSystem
 default_threshold = 0.876  # threshold given in rinni's code
 
 
-csv_write_path = "slide_df_cache/slides.csv"
+csv_write_path = "slide_df_cache/"
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
 cfp.read("config.ini")
 
 service_account_key_json = cfp["GCS"]["gcs_storage_key"]
-gs_url = cfp["GCS"]["bucket_url"]
 
-bucket_name = gs_url.replace("gs://", "")
+bucket_name = "YOUR BUCKET NAME HERE"
 
+csv_write_path += bucket_name + ".csv"
 
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
@@ -46,6 +47,8 @@ storage_service = build("storage", "v1", credentials=credentials)
 
 # Get an initial, mostly-unpopulated slide dataframe
 slide_df = get_initial_slide_df_with_predictions_only(client, bucket_name, gcs)
+if slide_df.select(pl.count()).item() == 0:
+    slide_df = get_initial_slide_df(client, bucket_name, gcs)
 
 print(slide_df)
 

@@ -15,11 +15,11 @@ spot_columns_per_page=10
 cache_timeout=60
 
 [SLIDES]
-slide_df_cache_file=slide_df_cache/slides.csv
+slide_df_cache_dir=slide_df_cache/
 
 [GCS]
 gcs_storage_key=/path/to/your/service/account/key.json
-bucket_url=gs://NAME-OF-YOUR-BUCKET
+bucket_url=gs://NAME-OF-ONE-BUCKET,gs://NAME-OF-ANOTHER-BUCKET(, possibly more)
 
 [TESTING]
 slide_count_cutoff=50
@@ -30,8 +30,8 @@ Modify `config.ini` such that `gcs_storage_key` points to your json GCS key, and
 Additionally, set `cutoff` to a low number if testing things out.
 
 ### Skip the following step if you already have a csv of per-slide data
-For performance purposes, copy `scripts/populate_cache.csv.py` to the root directory of the repository and run it from there. This will generate a file
-`slide_df_cache/slides.csv` that caches an initial first pass at per-slide data, with a set prediction threshold.
+For performance purposes, copy `scripts/populate_cache.csv.py` to the root directory of the repository, edit the `bucket_name` variable inside near the beginning to the bucket you want to cache. This will generate a file
+`slide_df_cache/slides.csv` that caches an initial first pass at per-slide data, with a set prediction threshold if any prediction data can be found. It will default to a version without prediction data otherwise.
 
 # Run #
 ```

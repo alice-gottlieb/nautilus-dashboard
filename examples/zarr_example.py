@@ -45,8 +45,8 @@ client = storage.Client.from_service_account_json(service_account_key_json)
 # Create a storage client
 storage_service = build("storage", "v1", credentials=credentials)
 
-spot_img_zarr = parse_slide(gcs,zipzarr_url)
+spot_img_zarr = parse_slide(gcs, zipzarr_url)
 
 for i in range(25):
-    spot_img = Image.fromarray(get_image_from_zarr(spot_img_zarr,240+i)[3])
+    spot_img = Image.fromarray(get_image_from_zarr(spot_img_zarr, 240 + i)["compose"])
     spot_img.show()

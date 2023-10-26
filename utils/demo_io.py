@@ -222,7 +222,7 @@ def get_image(
     image = image.resize(
         (int(image.size[0] * resize_factor), int(image.size[1] * resize_factor))
     )
-    print("Got image at " + str(bucket_name) + "/" + str(slide_name) + "/" + str(uri))
+    # print("Got image at " + str(bucket_name) + "/" + str(slide_name) + "/" + str(uri))
     return image
 
 
@@ -424,7 +424,9 @@ def get_fovs_df(client, bucket_name, list_of_slide_names):
         #         + fov_list[i]
         #     )
 
-        sl_fovs_dict["image_uri"] = fov_list
+        sl_fovs_dict["image_uri"] = [
+            bucket_name.strip("/") + "/" + uri for uri in fov_list
+        ]
         # same slide label for all fovs in a slide
         sl_fovs_dict["slide_label"] = [sl.strip("/")] * len(fov_list)
         # no default id in slide, so assign programmatically
@@ -517,9 +519,12 @@ def populate_slide_rows(
 
         if thresh is not None:
             spot_df = get_spots_csv(bucket_name, gcs, sl)
-            results = get_results_from_threshold(spot_df, thresh)
-            for k in results.keys():
-                slide_row_dict[k] = [results[k]]
+            try:
+                results = get_results_from_threshold(spot_df, thresh)
+                for k in results.keys():
+                    slide_row_dict[k] = [results[k]]
+            except:
+                print("failed to get prediction results for slide " + str(sl))
 
         ### update row in dataframe to be returned
         for k in slide_row_dict.keys():
