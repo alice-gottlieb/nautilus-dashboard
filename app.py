@@ -1,4 +1,4 @@
-from dash import Dash, html, dash_table, dcc, callback, Output, Input
+from dash import Dash, html, dash_table, dcc, callback, Output, Input, callback_context
 import dash
 import dash_bootstrap_components as dbc
 import pandas as pd
@@ -13,12 +13,14 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from utils.demo_io import (
     get_initial_slide_df_with_predictions_only,
+    get_initial_slide_df,
     get_fovs_df,
     get_top_level_dirs,
     populate_slide_rows,
     get_histogram_df,
     get_image,
     get_spots_csv,
+    get_mapping_csv,
     crop_spots_from_slide,
     get_combined_spots_df,
 )
@@ -26,23 +28,27 @@ from utils.polars_helpers import (
     get_detection_stats_vs_threshold,
     get_results_from_threshold,
 )
+from utils.zarr_utils import parse_slide, get_image_from_zarr, encode_image
 import polars as pl
 from gcsfs import GCSFileSystem
 from PIL import Image
 from io import BytesIO
 from flask_caching import Cache
+import os
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
 cfp.read("config.ini")
 
 service_account_key_json = cfp["GCS"]["gcs_storage_key"]
-gs_url = cfp["GCS"]["bucket_url"]
+gs_urls = cfp["GCS"]["bucket_urls"].split(",")
 
+for i in range(len(gs_urls)):
+    gs_urls[i] = gs_urls[i].strip()
 
-slide_df_cache_file = "slide_df_cache/slides.csv"
+slide_df_cache_dir = "slide_df_cache/"
 try:
-    slide_df_cache_file = cfp["SLIDES"]["slide_df_cache_file"]
+    slide_df_cache_dir = cfp["SLIDES"]["slide_df_cache_dir"]
 except:
     pass
 
@@ -52,15 +58,16 @@ try:
 except:
     pass
 
+
 spot_rows_per_page = 2
 spot_columns_per_page = 5
 
 try:
-    spots_rows_per_page = int(cfp["DISPLAY"]["spot_rows_per_page"])
+    spot_rows_per_page = int(cfp["DISPLAY"]["spot_rows_per_page"])
 except:
     pass
 try:
-    spots_columns_per_page = int(cfp["DISPLAY"]["spot_columns_per_page"])
+    spot_columns_per_page = int(cfp["DISPLAY"]["spot_columns_per_page"])
 except:
     pass
 
@@ -73,7 +80,10 @@ try:
 except:
     pass
 
-bucket_name = gs_url.replace("gs://", "")
+bucket_names = []
+
+for url in gs_urls:
+    bucket_names.append(url.replace("gs://", ""))
 
 client = storage.Client.from_service_account_json(service_account_key_json)
 
@@ -85,6 +95,7 @@ try:
         debug = True
 except:
     pass
+
 
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
@@ -162,27 +173,53 @@ cache = Cache(
 
 
 @cache.memoize(timeout=cache_timeout)
-def slide_df_cached(my_cutoff=None):
+def get_spots_from_zarr(slide_img_url, spot_id_list):
+    """
+    :brief: Returns a list of dicts in the form
+        {"spot_id":spot id, "image_channel_1_label":image_channel_ndarray,...}
+        for all channels in the image returned by our zarr methods
+    """
+    spot_image_zarr = parse_slide(gcs, slide_img_url)
+    images = []
+    for spot_id in spot_id_list:
+        images.append(get_image_from_zarr(spot_image_zarr, spot_id))
+    return images
+
+
+@cache.memoize(timeout=cache_timeout)
+def slide_df_cached(bucket_name, my_cutoff=None):
     slides = None
     try:
-        slides = pl.read_csv(slide_df_cache_file)
+        slides = pl.read_csv(os.path.join(slide_df_cache_dir, bucket_name + ".csv"))
     except:
         slides = get_initial_slide_df_with_predictions_only(
             client, bucket_name, gcs, cutoff=my_cutoff
         )
-    slides = slides.with_columns(
-        (pl.col("predicted_positive") * (5e6) / pl.col("rbcs"))
-        .cast(pl.Int64)
-        .alias("positives/5M rbc")
-    )
-
+    try:
+        slides = slides.with_columns(
+            (pl.col("predicted_positive") * (5e6) / pl.col("rbcs"))
+            .cast(pl.Int64)
+            .alias("positives/5M rbc")
+        )
+    except:  # if calculation of positive rate fails for whatever reason, skip
+        pass
     # add a column for viewing FOVs/spots/charts
     # leave this in even after using get_initial_slide_df for the slides table
+    try:
+        slides.select(pl.col("slide_name"))
+    except pl.exceptions.ColumnNotFoundError:
+        try:
+            slides = get_initial_slide_df(client, bucket_name, gcs, cutoff=my_cutoff)
+        except:
+            slides = slides_placeholder
+
     slides = slides.with_columns(
         pl.concat_str(
             [
                 pl.lit("[View Charts](/"),
                 pl.lit("chartsview_"),
+                pl.lit(bucket_name),
+                pl.lit("/"),
                 pl.col("slide_name"),
                 pl.lit("/)"),
             ]
@@ -191,6 +228,8 @@ def slide_df_cached(my_cutoff=None):
             [
                 pl.lit("[View Spots](/"),
                 pl.lit("spotsview_"),
+                pl.lit(bucket_name),
+                pl.lit("/"),
                 pl.col("slide_name"),
                 pl.lit("/)"),
             ]
@@ -199,6 +238,8 @@ def slide_df_cached(my_cutoff=None):
             [
                 pl.lit("[View FOVs](/"),
                 pl.lit("fovsview_"),
+                pl.lit(bucket_name),
+                pl.lit("/"),
                 pl.col("slide_name"),
                 pl.lit("/)"),
             ]
@@ -208,14 +249,25 @@ def slide_df_cached(my_cutoff=None):
 
 
 # Create the image-(parasite output) grid layout
-def create_image_grid(slide_name, start_index, end_index, descending=True):
-    spot_imgs, scores = spot_images_and_scores(
-        slide_name, start_index, end_index, descending
+def create_image_grid_and_options_and_display_count(
+    bucket_name, slide_name, start_index, end_index, sort_method, channel
+):
+    spot_imgs, scores, page_display = spot_images_and_scores_and_display_count(
+        bucket_name, slide_name, start_index, end_index, sort_method
     )
 
-    spot_imgs = spot_imgs[0]
+    # spot_imgs = spot_imgs[0]
     # spot_imgs, scores = ([Image.open("assets/images/nautilus1_tiny.jpg")],[0.99])
     image_rows = []
+    channel_options = []
+    if len(spot_imgs) > 0:
+        for k in spot_imgs[0].keys():
+            if k == "spot_id":
+                continue
+            channel_options.append(k)
+    selected_channel = channel
+    if selected_channel not in channel_options:
+        selected_channel = channel_options[0]
     for i in range(spot_rows_per_page):
         image_row_list = []
         for j in range(spot_columns_per_page):
@@ -226,9 +278,11 @@ def create_image_grid(slide_name, start_index, end_index, descending=True):
                             dbc.CardBody(
                                 [
                                     html.Img(
-                                        src=spot_imgs[i * spot_columns_per_page + j],
+                                        src=spot_imgs[i * spot_columns_per_page + j][
+                                            selected_channel
+                                        ],
                                         style={
-                                            "width": "200px",
+                                            "width": "100px",
                                             "image-rendering": "pixelated",
                                         },
                                     ),
@@ -244,27 +298,98 @@ def create_image_grid(slide_name, start_index, end_index, descending=True):
         image_rows.append(dbc.Row(image_row_list))
 
     image_grid = html.Div(image_rows, className="image-grid")
-    return image_grid
+    return image_grid, channel_options, page_display
 
 
 @cache.memoize(timeout=cache_timeout)
-def combined_spots_df(slide_name):
+def combined_spots_df(bucket_name, slide_name):
     return get_combined_spots_df(bucket_name, gcs, slide_name)
 
 
 @cache.memoize(timeout=cache_timeout)
-def spot_images_and_scores(slide_name, id_start, id_end, descending=True):
-    spot_df = combined_spots_df(slide_name)
-    spot_df = (
-        spot_df.lazy()
-        .sort(pl.col("parasite output"), descending=descending)
-        .with_row_count()
-        .filter(
-            (pl.col("row_nr") >= pl.lit(id_start))
-            & (pl.col("row_nr") <= pl.lit(id_end))
+def spots_pred_csv_cached(bucket_name, slide_name):
+    spot_df = get_spots_csv(bucket_name, gcs, slide_name)
+    return spot_df
+
+
+@cache.memoize(timeout=cache_timeout)
+def spots_mapping_csv_cached(bucket_name, slide_name):
+    mapping_df = get_mapping_csv(bucket_name, gcs, slide_name)
+    return mapping_df
+
+
+@cache.memoize(timeout=cache_timeout)
+def spot_images_and_scores_and_display_count(
+    bucket_name,
+    slide_name,
+    id_start,
+    id_end,
+    sort_method,
+    zarr_preferred=True,
+    rel_path_to_zarr_in_slide="version1/spot_images.zip",
+):
+    try:
+        spot_df = combined_spots_df(bucket_name, slide_name)
+        spot_count = spot_df.select(pl.count()).item()
+        if sort_method in ["ascending", "descending"]:
+            descending = True
+            if sort_method == "ascending":
+                descending = False
+            spot_df = (
+                spot_df.lazy()
+                .sort(pl.col("parasite output"), descending=descending)
+                .with_row_count()
+                .filter(
+                    (pl.col("row_nr") >= pl.lit(id_start))
+                    & (pl.col("row_nr") <= pl.lit(id_end))
+                )
+                .collect(streaming=True)
+            )
+        else:
+            spot_df = (
+                spot_df.lazy()
+                .filter(
+                    (pl.col("index") >= pl.lit(id_start))
+                    & (pl.col("index") <= pl.lit(id_end))
+                )
+                .collect(streaming=True)
+            )
+        spot_ids = spot_df["index"].to_list()
+        scores = spot_df["parasite output"].to_numpy()
+    except:
+        spot_df = spots_mapping_csv_cached(bucket_name, slide_name)
+        spot_count = spot_df.select(pl.count()).item()
+        spot_df = (
+            spot_df.lazy()
+            .with_row_count()
+            .filter(
+                (pl.col("row_nr") >= pl.lit(id_start))
+                & (pl.col("row_nr") <= pl.lit(id_end))
+            )
+            .collect(streaming=True)
         )
-        .collect(streaming=True)
-    )
+        spot_ids = spot_df["row_nr"].to_list()
+        scores = np.zeros(len(spot_df))
+    if zarr_preferred:
+        try:
+            zarr_path = (
+                bucket_name.strip("/")
+                + "/"
+                + os.path.join(slide_name, rel_path_to_zarr_in_slide)
+            )
+            spot_imgs = get_spots_from_zarr(zarr_path, spot_ids)
+            for i in range(len(spot_imgs)):
+                for k in spot_imgs[i].keys():
+                    if k == "spot_id":
+                        continue
+                    spot_imgs[i][k] = encode_image(spot_imgs[i][k])
+
+            page_display_string = (
+                str(id_start) + "-" + str(id_end) + " of " + str(spot_count)
+            )
+            return (spot_imgs, scores, page_display_string)
+        except:  # default to cropping from jpeg
+            pass
     spot_coords = []
     for spot in spot_df.rows(named=True):
         spot_coords.append(
@@ -277,22 +402,57 @@ def spot_images_and_scores(slide_name, id_start, id_end, descending=True):
                 spot["r"],
             )
         )
-    spot_imgs = (
-        crop_spots_from_slide(storage_service, bucket_name, slide_name, spot_coords),
+    spot_imgs = crop_spots_from_slide(
+        storage_service, bucket_name, slide_name, spot_coords
     )
-    scores = spot_df["parasite output"].to_numpy()
-    return (spot_imgs, scores)
+    for spot_id, image_index in zip(spot_ids, range(len(spot_imgs))):
+        spot_imgs[image_index] = {"spot_id": spot_id, "compose": spot_imgs[image_index]}
+    page_display_string = str(id_start) + "-" + str(id_end) + " of " + str(spot_count)
+    return (spot_imgs, scores, page_display_string)
 
 
 # Define the layout
 spot_table_layout = html.Div(
     [
         html.H1("Spot Display"),
+        html.P("", id="bucket-name-spots", title=""),
         html.P("", id="slide-name-spots", title=""),
-        html.Div(id="image-grid-container"),
-        dcc.Input(
-            id="pagination", type="text", debounce=True, placeholder="Enter page number"
+        dbc.Row(
+            [
+                dbc.Col(
+                    dcc.Input(
+                        id="pagination",
+                        type="text",
+                        debounce=True,
+                        placeholder="Enter page number",
+                    )
+                ),
+                dbc.Col(html.P(children=[""], id="no-slides-indicator")),
+            ]
         ),
+        dbc.Row(
+            [
+                dbc.Col(
+                    dcc.Dropdown(
+                        id="spot-image-channel-dropdown",
+                        placeholder="Select Channel",
+                        options=["compose"],
+                        value="compose",
+                        clearable=False,
+                    )
+                ),
+                dbc.Col(
+                    dcc.Dropdown(
+                        id="spot-image-sorting-dropdown",
+                        placeholder="Select Sorting Method",
+                        options=["no sort", "ascending", "descending"],
+                        value="no sort",
+                        clearable=False,
+                    )
+                ),
+            ]
+        ),
+        html.Div(id="image-grid-container"),
     ]
 )
 
@@ -300,17 +460,24 @@ spot_table_layout = html.Div(
 # Callback to update the displayed items based on pagination
 @app.callback(
     Output("image-grid-container", "children"),
+    Output("spot-image-channel-dropdown", "options"),
+    Output("no-slides-indicator", "children"),
+    Input("bucket-name-spots", "title"),
     Input("slide-name-spots", "title"),
     Input("pagination", "value"),
+    Input("spot-image-sorting-dropdown", "value"),
+    Input("spot-image-channel-dropdown", "value"),
 )
-def update_image_grid(slide_name, page):
+def update_image_grid(bucket_name, slide_name, page, sort_method, channel):
     try:
         page = int(page)
     except (ValueError, TypeError):
         page = 1
     start_index = (page - 1) * spots_per_page
     end_index = page * spots_per_page
-    return create_image_grid(slide_name, start_index, end_index)
+    return create_image_grid_and_options_and_display_count(
+        bucket_name, slide_name, start_index, end_index, sort_method, channel
+    )
 
 
 # Define the layout of the chart page
@@ -328,7 +495,7 @@ graph_layout = html.Div(
 
 
 @cache.memoize(timeout=cache_timeout)
-def get_plot_df(slide_name):
+def get_plot_df(bucket_name, slide_name):
     spot_df = get_spots_csv(bucket_name, gcs, slide_name)
     thresholds = np.linspace(0.0, 1.0, 200, endpoint=False)
     plot_df = get_detection_stats_vs_threshold(spot_df, thresholds)
@@ -353,17 +520,18 @@ def get_plot_df(slide_name):
 
 
 # Define the callback function to update the line graph
-@app.callback(Output("line-plot", "figure"), [Input("y-axis-dropdown", "value")])
+@app.callback(Output("line-plot", "figure"), Input("y-axis-dropdown", "value"))
 def update_line_plot(selected_y_columns):
     if selected_y_columns is None or len(selected_y_columns) == 0:
         return go.Figure()
 
     page_name = selected_y_columns[0].split("<>")[-1]
+    bucket_name = selected_y_columns[0].split("<>")[-2]
 
     for i in range(len(selected_y_columns)):
         selected_y_columns[i] = selected_y_columns[i].split("<>")[0]
 
-    plot_df = get_plot_df(page_name)
+    plot_df = get_plot_df(bucket_name, page_name)
 
     fig = go.Figure()
     for column in selected_y_columns:
@@ -402,16 +570,113 @@ index_page = html.Div(
     [
         html.H1("Cephla"),
         html.H2("Nautilus Dashboard"),
-        html.H3("Table Placeholder", id="slides-table"),
+        dcc.Dropdown(
+            id="bucket-name-dropdown",
+            placeholder="Select Bucket",
+            options=bucket_names,
+            value=bucket_names[0],
+            clearable=False,
+        ),
+        dash_table.DataTable(
+            id="slides-table",
+            # set view_fovs to display as markdown
+            # Allows creation of a link to the FOVs page
+            columns=[
+                {"id": i, "name": i, "presentation": "markdown"}
+                if i in ["view_fovs", "view_charts", "view_spots"]
+                else {"name": i, "id": i, "selectable": True, "editable": True}
+                if i == "threshold"
+                else {"name": i, "id": i, "selectable": True}
+                for i in slides_placeholder.columns
+            ],
+            data=slides_placeholder.to_pandas().to_dict("records"),
+            # row_selectable="single",
+            style_table={"overflowX": "scroll"},
+            style_cell={
+                "height": "auto",
+                "minWidth": "0px",
+                "maxWidth": "180px",
+                "whiteSpace": "normal",
+                "textAlign": "left",
+                "overflow-y": "hidden",
+            },
+            # Show selected cell in blue
+            style_data_conditional=[
+                {
+                    "if": {"state": "selected"},
+                    "backgroundColor": "rgba(0, 116, 217, 0.3)",
+                    "border": "1px solid blue",
+                }
+            ],
+            tooltip_data=[
+                {"slide_name": {"value": row["slide_name"], "type": "markdown"}}
+                for row in slides_placeholder.rows(named=True)
+            ],
+            tooltip_duration=None,
+            filter_action="native",
+            sort_action="native",
+            sort_mode="multi",
+            # column_selectable="single",
+            row_selectable="single",
+            selected_columns=[],
+            selected_rows=[],
+            page_action="native",
+            page_current=0,
+            page_size=50,
+        ),
     ]
 )
 
 
 @app.callback(
     Output("slides-table", "data"),
-    [Input("slides-table", "selected_rows"), Input("slides-table", "data")],
+    Output("slides-table", "columns"),
+    Output("slides-table", "tooltip_data"),
+    [
+        Input("bucket-name-dropdown", "value"),
+        Input("slides-table", "selected_rows"),
+        Input("slides-table", "data"),
+        Input("slides-table", "columns"),
+        Input("slides-table", "tooltip_data"),
+    ],
 )
-def update_slide_data(selected_rows, data):
+def update_slide_df_master(bucket_name, selected_rows, data, columns, tooltip_data):
+    ctx = callback_context
+    if ctx.triggered[0]["prop_id"] == ".":
+        ret_data, ret_columns, ret_tooltip_data = switch_bucket(bucket_names[0])
+        return ret_data, ret_columns, ret_tooltip_data
+    if ctx.triggered[0]["prop_id"].split(".")[0] == "bucket-name-dropdown":
+        ret_data, ret_columns, ret_tooltip_data = switch_bucket(bucket_name)
+        return ret_data, ret_columns, ret_tooltip_data
+    else:
+        ret_data = update_slide_data(bucket_name, selected_rows, data)
+        return ret_data, columns, tooltip_data
+
+
+def switch_bucket(bucket_name):
+    slides = slide_df_cached(bucket_name, cutoff)
+
+    # drop cols which are all null from slides
+    slides = slides[[s.name for s in slides if not (s.null_count() == slides.height)]]
+
+    # Allows creation of a link to the FOVs page
+    columns = [
+        {"id": i, "name": i, "presentation": "markdown"}
+        if i in ["view_fovs", "view_charts", "view_spots"]
+        else {"name": i, "id": i, "selectable": True, "editable": True}
+        if i == "threshold"
+        else {"name": i, "id": i, "selectable": True}
+        for i in slides.columns
+    ]
+    data = slides.to_pandas().to_dict("records")
+    tooltip_data = [
+        {"slide_name": {"value": row["slide_name"], "type": "markdown"}}
+        for row in slides.rows(named=True)
+    ]
+    return (data, columns, tooltip_data)
+
+
+def update_slide_data(bucket_name, selected_rows, data):
     if len(selected_rows) == 0:
         return data
     try:
@@ -425,12 +690,20 @@ def update_slide_data(selected_rows, data):
     relevant_row = data[selected_rows[0]]
     relevant_row["threshold"] = threshold
     spot_df = get_spots_csv(bucket_name, gcs, relevant_row["slide_name"])
-    results = get_results_from_threshold(spot_df, threshold)
-    for k in results.keys():
-        relevant_row[k] = results[k]
-    relevant_row["positives/5M rbc"] = int(
-        relevant_row["predicted_positive"] * (5e6) / relevant_row["rbcs"]
-    )
+    try:
+        results = get_results_from_threshold(spot_df, threshold)
+        for k in results.keys():
+            relevant_row[k] = results[k]
+    except:
+        print(
+            "failed to get prediction results for slide " + relevant_row["slide_name"]
+        )
+    try:
+        relevant_row["positives/5M rbc"] = int(
+            relevant_row["predicted_positive"] * (5e6) / int(relevant_row["rbcs"])
+        )
+    except:
+        print("failed to divide by rbcs for slide " + relevant_row["slide_name"])
     data[selected_rows[0]] = relevant_row
     return data
 
@@ -440,6 +713,8 @@ def update_slide_data(selected_rows, data):
 def display_page(pathname):
     # view individual FOV
     if pathname and pathname[-5:] == ".jpg/":
+        # get bucket name from the URL
+        bucket_name = pathname.split("/")[-5]
         # get the slide name from the URL
         page_name = pathname.split("/")[-4]
         # get the image name from the URL
@@ -460,9 +735,10 @@ def display_page(pathname):
         )
     # FOVs page
     elif pathname and pathname != "/" and "fovsview_" in pathname:
-        page_name = pathname.split("/")[-2].strip(
-            "fovsview_"
-        )  # Extract the slide name from the URL
+        page_name = pathname.split("/")[-2]  # extract slide name
+        bucket_name = pathname.split("/")[-3].replace(
+            "fovsview_", ""
+        )  # Extract the bucket name from the URL
         # Dynamically create the content based on the page number
         fovs_df = get_fovs_df(client, bucket_name, [page_name])
 
@@ -539,82 +815,31 @@ def display_page(pathname):
         )
         return page_content
     elif pathname and pathname != "/" and "chartsview_" in pathname:
-        page_name = pathname.split("/")[-2].strip("chartsview_")
-        plot_df = get_plot_df(page_name)
+        bucket_name = pathname.split("/")[-3].replace("chartsview_", "")
+        page_name = pathname.split("/")[-2]  # extract slide name
+        plot_df = get_plot_df(bucket_name, page_name)
 
         page_content = graph_layout
         columns = list(plot_df.columns)
         column_options = [
-            {"label": col, "value": col + "<>" + page_name} for col in columns
+            {"label": col, "value": col + "<>" + bucket_name + "<>" + page_name}
+            for col in columns
         ]
         page_content.children[1].options = column_options
         return page_content
     elif pathname and pathname != "/" and "spotsview_" in pathname:
-        page_name = pathname.split("/")[-2].strip("spotsview_")
+        bucket_name = pathname.split("/")[-3].replace("spotsview_", "")
+        page_name = pathname.split("/")[-2]  # extract slide name
         page_layout = spot_table_layout
         page_layout.children[1] = html.P(
+            bucket_name, id="bucket-name-spots", title=bucket_name
+        )
+        page_layout.children[2] = html.P(
             page_name + " Spots", id="slide-name-spots", title=page_name
         )
         return page_layout
     else:
-        slides = slide_df_cached(cutoff)
-
-        # drop cols which are all null from slides
-        slides = slides[
-            [s.name for s in slides if not (s.null_count() == slides.height)]
-        ]
-
-        page_layout = index_page
-
-        page_layout.children[2] = dash_table.DataTable(
-            id="slides-table",
-            # set view_fovs to display as markdown
-            # Allows creation of a link to the FOVs page
-            columns=[
-                {"id": i, "name": i, "presentation": "markdown"}
-                if i in ["view_fovs", "view_charts", "view_spots"]
-                else {"name": i, "id": i, "selectable": True, "editable": True}
-                if i == "threshold"
-                else {"name": i, "id": i, "selectable": True}
-                for i in slides.columns
-            ],
-            data=slides.to_pandas().to_dict("records"),
-            # row_selectable="single",
-            style_table={"overflowX": "scroll"},
-            style_cell={
-                "height": "auto",
-                "minWidth": "0px",
-                "maxWidth": "180px",
-                "whiteSpace": "normal",
-                "textAlign": "left",
-                "overflow-y": "hidden",
-            },
-            # Show selected cell in blue
-            style_data_conditional=[
-                {
-                    "if": {"state": "selected"},
-                    "backgroundColor": "rgba(0, 116, 217, 0.3)",
-                    "border": "1px solid blue",
-                }
-            ],
-            tooltip_data=[
-                {"slide_name": {"value": row["slide_name"], "type": "markdown"}}
-                for row in slides.rows(named=True)
-            ],
-            tooltip_duration=None,
-            filter_action="native",
-            sort_action="native",
-            sort_mode="multi",
-            # column_selectable="single",
-            row_selectable="single",
-            selected_columns=[],
-            selected_rows=[],
-            page_action="native",
-            page_current=0,
-            page_size=50,
-        )
-
-        return page_layout
+        return index_page
 
 
 if __name__ == "__main__":

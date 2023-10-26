@@ -4,36 +4,36 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from utils.demo_io import (
     get_initial_slide_df_with_predictions_only,
-    get_initial_slide_df,
     get_fovs_df,
     get_top_level_dirs,
     populate_slide_rows,
     get_histogram_df,
     list_blobs_with_prefix,
-    get_spots_csv,
 )
-from utils.polars_helpers import get_results_from_threshold
 import polars as pl
 from gcsfs import GCSFileSystem
+from PIL import Image
+import asyncio
 
-
-default_threshold = 0.876  # threshold given in rinni's code
-
-
-csv_write_path = "slide_df_cache/"
+from utils.zarr_utils import parse_slide, get_image_from_zarr
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
 cfp.read("config.ini")
 
 service_account_key_json = cfp["GCS"]["gcs_storage_key"]
+gs_url = cfp["GCS"]["bucket_url"]
 
-bucket_name = "YOUR BUCKET NAME HERE"
+bucket_name = gs_url.replace("gs://", "")
 
-csv_write_path += bucket_name + ".csv"
+bucket2_name = "octopi-malaria-data-processing"
+
+zipzarr_url = "octopi-malaria-data-processing/072622-D1-3_2022-07-26_17-50-42.852998/version1/spot_images.zip"
+
 
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
+
 
 # Authenticate using the service account key file
 credentials = service_account.Credentials.from_service_account_file(
@@ -45,19 +45,8 @@ client = storage.Client.from_service_account_json(service_account_key_json)
 # Create a storage client
 storage_service = build("storage", "v1", credentials=credentials)
 
-# Get an initial, mostly-unpopulated slide dataframe
-slide_df = get_initial_slide_df_with_predictions_only(client, bucket_name, gcs)
-if slide_df.select(pl.count()).item() == 0:
-    slide_df = get_initial_slide_df(client, bucket_name, gcs)
+spot_img_zarr = parse_slide(gcs, zipzarr_url)
 
-print(slide_df)
-
-slide_list = slide_df["slide_name"].to_list()
-
-slide_df = populate_slide_rows(
-    client, bucket_name, gcs, slide_df, slide_list, set_threshold=default_threshold
-)
-
-print(slide_df)
-
-slide_df.write_csv(csv_write_path)
+for i in range(25):
+    spot_img = Image.fromarray(get_image_from_zarr(spot_img_zarr, 240 + i)["compose"])
+    spot_img.show()
