@@ -1,5 +1,6 @@
 from dash import Dash, html, dash_table, dcc, callback, Output, Input, callback_context
 import dash
+import dash_auth
 import dash_bootstrap_components as dbc
 import pandas as pd
 import polars as pl
@@ -35,6 +36,13 @@ from PIL import Image
 from io import BytesIO
 from flask_caching import Cache
 import os
+import json
+
+VALID_USERNAME_PASSWORD_PAIRS = None
+
+# parse in valid usernames/passwds
+with open("users.json","r") as userfile:
+    VALID_USERNAME_PASSWORD_PAIRS = json.load(userfile)
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
@@ -166,6 +174,8 @@ else:
         suppress_callback_exceptions=True,
         external_stylesheets=[dbc.themes.BOOTSTRAP],
     )
+
+auth = dash_auth.BasicAuth(app,VALID_USERNAME_PASSWORD_PAIRS)
 
 cache = Cache(
     app.server, config={"CACHE_TYPE": "filesystem", "CACHE_DIR": "cache-directory"}
@@ -843,4 +853,4 @@ def display_page(pathname):
 
 
 if __name__ == "__main__":
-    app.run_server(debug=debug)
+    app.run(debug=debug)
