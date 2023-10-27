@@ -29,7 +29,7 @@ from utils.polars_helpers import (
     get_detection_stats_vs_threshold,
     get_results_from_threshold,
 )
-from utils.zarr_utils import parse_slide, get_image_from_zarr, encode_image
+from utils.zarr_utils import parse_slide, encode_image, get_images_from_zarr_async_wrapper
 import polars as pl
 from gcsfs import GCSFileSystem
 from PIL import Image
@@ -37,6 +37,7 @@ from io import BytesIO
 from flask_caching import Cache
 import os
 import json
+import asyncio
 
 VALID_USERNAME_PASSWORD_PAIRS = None
 
@@ -190,9 +191,9 @@ def get_spots_from_zarr(slide_img_url, spot_id_list):
         for all channels in the image returned by our zarr methods
     """
     spot_image_zarr = parse_slide(gcs, slide_img_url)
-    images = []
-    for spot_id in spot_id_list:
-        images.append(get_image_from_zarr(spot_image_zarr, spot_id))
+    images = get_images_from_zarr_async_wrapper(spot_image_zarr,spot_id_list)
+    #for spot_id in spot_id_list:
+    #    images.append(get_image_from_zarr(spot_image_zarr, spot_id))
     return images
 
 

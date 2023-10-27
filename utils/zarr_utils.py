@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 import base64
-
+import asyncio
 
 class RemoteZipStore(zarr.ZipStore):
     def __init__(
@@ -64,6 +64,20 @@ def parse_slide(gcs, slide_img_url):
     spot_images = source["/spot_images"]
     return spot_images
 
+async def _get_image_from_zarr(spot_images, sample_id, img_list, img_index):
+    img_list[img_index]= get_image_from_zarr(spot_images,sample_id)
+
+async def get_images_from_zarr_async(spot_images, sample_id_list):
+    ret_list = [None for i in range(len(sample_id_list))]
+    tasklist = []
+    for img_index, sample_id in zip(range(len(sample_id_list)),sample_id_list):
+        tasklist.append(asyncio.create_task(_get_image_from_zarr(spot_images,sample_id,ret_list,img_index)))
+    for task in tasklist:
+        await task
+    return ret_list
+
+def get_images_from_zarr_async_wrapper(spot_images,sample_id_list):
+    return asyncio.run(get_images_from_zarr_async(spot_images,sample_id_list))
 
 def get_image_from_zarr(spot_images, sample_id):
     """
