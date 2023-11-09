@@ -29,7 +29,8 @@ from utils.polars_helpers import (
     get_detection_stats_vs_threshold,
     get_results_from_threshold,
 )
-from utils.zarr_utils import parse_slide, encode_image, get_images_from_zarr_async_wrapper
+from utils.zarr_utils import parse_slide, encode_image, get_images_from_zarr_built_in
+from utils.img_embed_utils import generate_temporary_public_url
 import polars as pl
 from gcsfs import GCSFileSystem
 from PIL import Image
@@ -67,6 +68,12 @@ try:
 except:
     pass
 
+
+embedding_url_timeout = 20.0
+try:
+    embedding_url_timeout = float(cfp["DISPLAY"]["embedding_url_timeout"])
+except:
+    pass
 
 spot_rows_per_page = 2
 spot_columns_per_page = 5
@@ -182,6 +189,25 @@ cache = Cache(
     app.server, config={"CACHE_TYPE": "filesystem", "CACHE_DIR": "cache-directory"}
 )
 
+@cache.memoize(timeout=cache_timeout)
+def get_spot_channels(bucket_name, spot_dir_path, extension=".png"):
+    channel_list = []
+    channel_get_prefix = os.path.join(spot_dir_path, "0_")
+    spot_zero_blobs = client.list_blobs(bucket_name, prefix=channel_get_prefix)
+    for blob in spot_zero_blobs:
+        channel_list.append(blob.name.split("_")[-1].split(".")[0])
+    return channel_list
+
+def get_spot_embeds(bucket_name, spot_dir_path ,spot_id_list, extension=".png"):
+    channel_list = get_spot_channels(bucket_name, spot_dir_path, extension=extension)
+    spot_imgs = []
+    for spot_id in spot_id_list:
+        spot_dict = {"spot_id":spot_id}
+        spot_prefix = os.path.join(spot_dir_path, str(spot_id))
+        for channel in channel_list:
+            spot_dict[channel] = generate_temporary_public_url(client, bucket_name,spot_prefix+"_"+channel+extension, embedding_url_timeout)
+        spot_imgs.append(spot_dict)
+    return spot_imgs
 
 @cache.memoize(timeout=cache_timeout)
 def get_spots_from_zarr(slide_img_url, spot_id_list):
@@ -191,7 +217,7 @@ def get_spots_from_zarr(slide_img_url, spot_id_list):
         for all channels in the image returned by our zarr methods
     """
     spot_image_zarr = parse_slide(gcs, slide_img_url)
-    images = get_images_from_zarr_async_wrapper(spot_image_zarr,spot_id_list)
+    images = get_images_from_zarr_built_in(spot_image_zarr,spot_id_list)
     #for spot_id in spot_id_list:
     #    images.append(get_image_from_zarr(spot_image_zarr, spot_id))
     return images
@@ -329,14 +355,15 @@ def spots_mapping_csv_cached(bucket_name, slide_name):
     return mapping_df
 
 
-@cache.memoize(timeout=cache_timeout)
 def spot_images_and_scores_and_display_count(
     bucket_name,
     slide_name,
     id_start,
     id_end,
     sort_method,
-    zarr_preferred=True,
+    embed_preferred=True,
+    zarr_fallback=True,
+    rel_path_to_embeds_in_slide="version3/",
     rel_path_to_zarr_in_slide="version1/spot_images.zip",
 ):
     try:
@@ -381,7 +408,18 @@ def spot_images_and_scores_and_display_count(
         )
         spot_ids = spot_df["row_nr"].to_list()
         scores = np.zeros(len(spot_df))
-    if zarr_preferred:
+    if embed_preferred:
+        try:
+            spot_dir_path = os.path.join(slide_name, rel_path_to_embeds_in_slide)
+            spot_imgs = get_spot_embeds(bucket_name, spot_dir_path ,spot_ids)
+            print("got spot image embeds") 
+            page_display_string =  (
+                str(id_start) + "-" + str(id_end) + " of " + str(spot_count)
+            )
+            return (spot_imgs, scores, page_display_string)
+        except:
+            pass
+    if zarr_fallback:
         try:
             zarr_path = (
                 bucket_name.strip("/")
@@ -389,11 +427,6 @@ def spot_images_and_scores_and_display_count(
                 + os.path.join(slide_name, rel_path_to_zarr_in_slide)
             )
             spot_imgs = get_spots_from_zarr(zarr_path, spot_ids)
-            for i in range(len(spot_imgs)):
-                for k in spot_imgs[i].keys():
-                    if k == "spot_id":
-                        continue
-                    spot_imgs[i][k] = encode_image(spot_imgs[i][k])
 
             page_display_string = (
                 str(id_start) + "-" + str(id_end) + " of " + str(spot_count)

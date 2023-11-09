@@ -79,6 +79,21 @@ async def get_images_from_zarr_async(spot_images, sample_id_list):
 def get_images_from_zarr_async_wrapper(spot_images,sample_id_list):
     return asyncio.run(get_images_from_zarr_async(spot_images,sample_id_list))
 
+def get_images_from_zarr_built_in(spot_images, sample_id_list):
+    sel_indices = [sample_id_list]
+    for i in range(len(spot_images.shape)-1):
+        sel_indices.append(slice(None))
+    sel_indices = tuple(sel_indices)
+    spot_samples = spot_images.get_orthogonal_selection(sel_indices)
+    ret_images = []
+    for sample_id,i in zip(sample_id_list,range(spot_samples.shape[0])):
+        array = spot_samples[i,:,0,:,:]
+        dapi = np.stack([array[2, :, :], array[1, :, :], array[0, :, :]], axis=2)
+        bf = array[3, :, :]
+        compose = (0.4* np.stack([bf]* 3,axis=2)+ 0.6 * dapi).astype("uint8")
+        ret_images.append({"spot_id": sample_id, "bf": encode_image(bf), "dapi": encode_image(dapi), "compose": encode_image(compose)})
+    return ret_images
+
 def get_image_from_zarr(spot_images, sample_id):
     """
     :brief: This is highly dependent on our current way of stacking
