@@ -12,6 +12,10 @@ from utils.demo_io import (
 )
 import polars as pl
 from gcsfs import GCSFileSystem
+from PIL import Image
+import asyncio
+
+from utils.zarr_utils import parse_slide, get_image_from_zarr
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
@@ -22,9 +26,14 @@ gs_url = cfp["GCS"]["bucket_url"]
 
 bucket_name = gs_url.replace("gs://", "")
 
+bucket2_name = "octopi-malaria-data-processing"
+
+zipzarr_url = "octopi-malaria-data-processing/072622-D1-3_2022-07-26_17-50-42.852998/version1/spot_images.zip"
+
 
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
+
 
 # Authenticate using the service account key file
 credentials = service_account.Credentials.from_service_account_file(
@@ -36,37 +45,8 @@ client = storage.Client.from_service_account_json(service_account_key_json)
 # Create a storage client
 storage_service = build("storage", "v1", credentials=credentials)
 
-# Get an initial, mostly-unpopulated slide dataframe
-slide_df = get_initial_slide_df_with_predictions_only(
-    client, bucket_name, gcs, cutoff=20
-)
+spot_img_zarr = parse_slide(gcs, zipzarr_url)
 
-print(slide_df)
-
-slide_files_raw = list_blobs_with_prefix(
-    client, bucket_name, prefix="patient_slides_analysis", cutoff=40
-)["blobs"]
-
-# select a couple of slide
-
-slides_of_interest = [
-    slidefile.split("/")[-1].strip(".npy")
-    for slidefile in slide_files_raw
-    if slidefile.endswith(".npy")
-]
-
-# repopulate rows on some slides with spot counts missing, and set threshold
-new_slide_df = populate_slide_rows(
-    client,
-    bucket_name,
-    gcs,
-    slide_df,
-    slides_of_interest[:4],
-    set_threshold=0.8,
-)
-
-print(new_slide_df)
-
-# get DF for these slides' FOVs
-fov_df = get_fovs_df(client, bucket_name, slides_of_interest)
-print(fov_df)
+for i in range(25):
+    spot_img = Image.fromarray(get_image_from_zarr(spot_img_zarr, 240 + i)["compose"])
+    spot_img.show()

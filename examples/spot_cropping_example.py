@@ -9,9 +9,13 @@ from utils.demo_io import (
     populate_slide_rows,
     get_histogram_df,
     list_blobs_with_prefix,
+    get_combined_spots_df,
+    crop_spots_from_slide,
 )
 import polars as pl
 from gcsfs import GCSFileSystem
+
+cutoff = 10  # how many slides to view cropped spot images from
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
@@ -36,18 +40,11 @@ client = storage.Client.from_service_account_json(service_account_key_json)
 # Create a storage client
 storage_service = build("storage", "v1", credentials=credentials)
 
-# Get an initial, mostly-unpopulated slide dataframe
-slide_df = get_initial_slide_df_with_predictions_only(
-    client, bucket_name, gcs, cutoff=20
-)
-
-print(slide_df)
 
 slide_files_raw = list_blobs_with_prefix(
-    client, bucket_name, prefix="patient_slides_analysis", cutoff=40
+    client, bucket_name, prefix="patient_slides_analysis", cutoff=cutoff * 2
 )["blobs"]
 
-# select a couple of slide
 
 slides_of_interest = [
     slidefile.split("/")[-1].strip(".npy")
@@ -55,18 +52,32 @@ slides_of_interest = [
     if slidefile.endswith(".npy")
 ]
 
-# repopulate rows on some slides with spot counts missing, and set threshold
-new_slide_df = populate_slide_rows(
-    client,
-    bucket_name,
-    gcs,
-    slide_df,
-    slides_of_interest[:4],
-    set_threshold=0.8,
-)
 
-print(new_slide_df)
+for sl in slides_of_interest:
+    spot_df = get_combined_spots_df(bucket_name, gcs, sl)
 
-# get DF for these slides' FOVs
-fov_df = get_fovs_df(client, bucket_name, slides_of_interest)
-print(fov_df)
+    print(spot_df)
+
+    spot_df_top = spot_df.sort(pl.col("parasite output"), descending=True).head(20)
+
+    spot_df_top = spot_df_top.with_columns(spot_df_top["r"].cast(pl.Int64) * 2)
+    spot_coords = []
+
+    for spot in spot_df_top.rows(named=True):
+        spot_coords.append(
+            (
+                spot["FOV_row"],
+                spot["FOV_col"],
+                spot["FOV_z"],
+                spot["x"],
+                spot["y"],
+                spot["r"],
+            )
+        )
+
+    print(spot_df_top)
+
+    spot_imgs = crop_spots_from_slide(storage_service, bucket_name, sl, spot_coords)
+
+    for img in spot_imgs:
+        img.show()

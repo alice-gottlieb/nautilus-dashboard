@@ -3,6 +3,7 @@ Collection of helper functions for polars operations, including FOV/spot selecti
 """
 import polars as pl
 import urllib.request
+import numpy as np
 
 
 def get_spots_from_fovs(fov_frame, fov_ids, rel_method, **kwargs):  # -> pl.Expr:
@@ -184,3 +185,143 @@ def get_histogram_from_file(filepath, column_name, ranges):
         .count()
     )
     return q
+
+
+def get_results_from_threshold(
+    spot_df,
+    threshold,
+    ann_dict={"non-parasite": 0, "parasite": 1, "unsure": 2, "unlabeled": -1},
+):
+    """
+    :brief: Given a dataframe of spots and a threshold, compute
+        the number of positive/negative/unsure spots in a slide
+    :param spot_df: dataframe containing spots. Should have
+        columns "parasite output", "non-parasite output",
+        "unsure output", "annotation"
+    :param threshold: threshold between 0 and 1.0
+    :return: dictionary of counts "predicted_positive",
+    "predicted_negative", "predicted_unsure", "pos_annotated",
+    "neg_annotated", "unsure_annotated", "total_annotated_positive_negative"
+    """
+    pred_pos = (
+        spot_df.filter(pl.col("parasite output") > threshold).select(pl.count()).item()
+    )
+    pred_neg = (
+        spot_df.filter(
+            (pl.col("parasite output") < threshold)
+            & (pl.col("non-parasite output") > pl.col("unsure output"))
+        )
+        .select(pl.count())
+        .item()
+    )
+    pred_unsure = spot_df.select(pl.count()).item() - pred_pos - pred_neg
+    ann_pos = (
+        spot_df.filter(pl.col("annotation") == ann_dict["parasite"])
+        .select(pl.count())
+        .item()
+    )
+    ann_neg = (
+        spot_df.filter(pl.col("annotation") == ann_dict["non-parasite"])
+        .select(pl.count())
+        .item()
+    )
+    ann_unsure = (
+        spot_df.filter(pl.col("annotation") == ann_dict["unsure"])
+        .select(pl.count())
+        .item()
+    )
+    total_ann_pos_neg = ann_pos + ann_neg
+    return {
+        "predicted_positive": pred_pos,
+        "predicted_negative": pred_neg,
+        "predicted_unsure": pred_unsure,
+        "pos_annotated": ann_pos,
+        "neg_annotated": ann_neg,
+        "unsure_annotated": ann_unsure,
+        "total_annotated_positive_negative": total_ann_pos_neg,
+    }
+
+
+def get_detection_stats_vs_threshold(
+    spot_df,
+    thresholds_array,
+    ann_dict={"non-parasite": 0, "parasite": 1, "unsure": 2, "unlabeled": -1},
+):
+    """
+    :brief: get a dataframe with thresholds in one column and per-threshold
+        annotated/predicted positive/negative/unsure data, along with
+        false positive/false negative counts
+    :param spot_df: dataframe containing spots. should have columns
+        "parasite output", "non-parasite output", "unsure output",
+        "annotation"
+    :param thresholds array: numpy ndarray of thresholds
+    """
+    plot_df = pl.DataFrame({"threshold": thresholds_array})
+
+    # create a dictionary of pl.Expr for each condition we want to count
+    expr_dict = {
+        "predicted_positive": pl.col("parasite output") > pl.col("threshold"),
+        "predicted_negative": (pl.col("parasite output") < pl.col("threshold"))
+        & (pl.col("non-parasite output") > pl.col("unsure output")),
+    }
+
+    expr_dict["false_positive"] = (expr_dict["predicted_positive"]) & (
+        pl.col("annotation") == pl.lit(ann_dict["non-parasite"])
+    )
+    expr_dict["false_negative"] = (expr_dict["predicted_negative"]) & (
+        pl.col("annotation") == pl.lit(ann_dict["parasite"])
+    )
+
+    df_list = []
+
+    for column in expr_dict.keys():
+        # counts per threshold of matching instances
+        matching_df = (
+            plot_df.lazy()
+            .join(spot_df.lazy(), how="cross")
+            .filter(expr_dict[column])
+            .group_by("threshold", maintain_order=True)
+            .agg(pl.count().alias(column))
+        )
+        df_list.append(matching_df)
+
+    # collect all queries at once
+    plot_df = pl.concat(df_list, how="align").collect(streaming=True)
+
+    spot_count = spot_df.select(pl.count()).item()
+
+    # get predicted_unsure counts
+    plot_df = plot_df.with_columns(
+        (
+            spot_count - pl.col("predicted_positive") - pl.col("predicted_negative")
+        ).alias("predicted_unsure")
+    )
+
+    # get annotation counts for ease of plotting
+
+    ann_pos = (
+        spot_df.filter(pl.col("annotation") == ann_dict["parasite"])
+        .select(pl.count())
+        .item()
+    )
+    ann_neg = (
+        spot_df.filter(pl.col("annotation") == ann_dict["non-parasite"])
+        .select(pl.count())
+        .item()
+    )
+    ann_unsure = (
+        spot_df.filter(pl.col("annotation") == ann_dict["unsure"])
+        .select(pl.count())
+        .item()
+    )
+    total_ann_pos_neg = ann_pos + ann_neg
+
+    plot_df = plot_df.with_columns(
+        pl.lit(ann_pos).alias("pos_annotated"),
+        pl.lit(ann_neg).alias("neg_annotated"),
+        pl.lit(ann_unsure).alias("unsure_annotated"),
+        pl.lit(total_ann_pos_neg).alias("total_annotated_positive_negative"),
+    )
+    plot_df = plot_df.with_columns(pl.all().fill_null(strategy="zero"))
+
+    return plot_df

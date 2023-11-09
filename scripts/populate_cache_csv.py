@@ -4,24 +4,33 @@ from google.oauth2 import service_account
 from googleapiclient.discovery import build
 from utils.demo_io import (
     get_initial_slide_df_with_predictions_only,
+    get_initial_slide_df,
     get_fovs_df,
     get_top_level_dirs,
     populate_slide_rows,
     get_histogram_df,
     list_blobs_with_prefix,
+    get_spots_csv,
 )
+from utils.polars_helpers import get_results_from_threshold
 import polars as pl
 from gcsfs import GCSFileSystem
+
+
+default_threshold = 0.876  # threshold given in rinni's code
+
+
+csv_write_path = "slide_df_cache/"
 
 # Parse in key and bucket name from config file
 cfp = ConfigParser()
 cfp.read("config.ini")
 
 service_account_key_json = cfp["GCS"]["gcs_storage_key"]
-gs_url = cfp["GCS"]["bucket_url"]
 
-bucket_name = gs_url.replace("gs://", "")
+bucket_name = "YOUR BUCKET NAME HERE"
 
+csv_write_path += bucket_name + ".csv"
 
 # Define GCS file system so files can be read
 gcs = GCSFileSystem(token=service_account_key_json)
@@ -37,36 +46,18 @@ client = storage.Client.from_service_account_json(service_account_key_json)
 storage_service = build("storage", "v1", credentials=credentials)
 
 # Get an initial, mostly-unpopulated slide dataframe
-slide_df = get_initial_slide_df_with_predictions_only(
-    client, bucket_name, gcs, cutoff=20
+slide_df = get_initial_slide_df_with_predictions_only(client, bucket_name, gcs)
+if slide_df.select(pl.count()).item() == 0:
+    slide_df = get_initial_slide_df(client, bucket_name, gcs)
+
+print(slide_df)
+
+slide_list = slide_df["slide_name"].to_list()
+
+slide_df = populate_slide_rows(
+    client, bucket_name, gcs, slide_df, slide_list, set_threshold=default_threshold
 )
 
 print(slide_df)
 
-slide_files_raw = list_blobs_with_prefix(
-    client, bucket_name, prefix="patient_slides_analysis", cutoff=40
-)["blobs"]
-
-# select a couple of slide
-
-slides_of_interest = [
-    slidefile.split("/")[-1].strip(".npy")
-    for slidefile in slide_files_raw
-    if slidefile.endswith(".npy")
-]
-
-# repopulate rows on some slides with spot counts missing, and set threshold
-new_slide_df = populate_slide_rows(
-    client,
-    bucket_name,
-    gcs,
-    slide_df,
-    slides_of_interest[:4],
-    set_threshold=0.8,
-)
-
-print(new_slide_df)
-
-# get DF for these slides' FOVs
-fov_df = get_fovs_df(client, bucket_name, slides_of_interest)
-print(fov_df)
+slide_df.write_csv(csv_write_path)

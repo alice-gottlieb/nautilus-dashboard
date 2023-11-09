@@ -159,8 +159,21 @@ cython_debug/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
-# Config file
+# Config files
 *.ini
+
+# Usernames/passwds
+users.json
 
 # json key
 key.json
+
+# cache directory
+cache-directory/
+
+# slide df cache
+slide_df_cache
+
+# npy files
+*.npy
+*.npz
