@@ -10,7 +10,7 @@ import numpy as np
 from PIL import Image
 from io import BytesIO
 import base64
-
+import asyncio
 
 class RemoteZipStore(zarr.ZipStore):
     def __init__(
@@ -64,6 +64,35 @@ def parse_slide(gcs, slide_img_url):
     spot_images = source["/spot_images"]
     return spot_images
 
+async def _get_image_from_zarr(spot_images, sample_id, img_list, img_index):
+    img_list[img_index]= get_image_from_zarr(spot_images,sample_id)
+
+async def get_images_from_zarr_async(spot_images, sample_id_list):
+    ret_list = [None for i in range(len(sample_id_list))]
+    tasklist = []
+    for img_index, sample_id in zip(range(len(sample_id_list)),sample_id_list):
+        tasklist.append(asyncio.create_task(_get_image_from_zarr(spot_images,sample_id,ret_list,img_index)))
+    for task in tasklist:
+        await task
+    return ret_list
+
+def get_images_from_zarr_async_wrapper(spot_images,sample_id_list):
+    return asyncio.run(get_images_from_zarr_async(spot_images,sample_id_list))
+
+def get_images_from_zarr_built_in(spot_images, sample_id_list):
+    sel_indices = [sample_id_list]
+    for i in range(len(spot_images.shape)-1):
+        sel_indices.append(slice(None))
+    sel_indices = tuple(sel_indices)
+    spot_samples = spot_images.get_orthogonal_selection(sel_indices)
+    ret_images = []
+    for sample_id,i in zip(sample_id_list,range(spot_samples.shape[0])):
+        array = spot_samples[i,:,0,:,:]
+        dapi = np.stack([array[2, :, :], array[1, :, :], array[0, :, :]], axis=2)
+        bf = array[3, :, :]
+        compose = (0.4* np.stack([bf]* 3,axis=2)+ 0.6 * dapi).astype("uint8")
+        ret_images.append({"spot_id": sample_id, "bf": encode_image(bf), "dapi": encode_image(dapi), "compose": encode_image(compose)})
+    return ret_images
 
 def get_image_from_zarr(spot_images, sample_id):
     """
