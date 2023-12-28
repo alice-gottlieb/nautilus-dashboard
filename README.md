@@ -13,6 +13,7 @@ Create a `config.ini` file in the top directory of this repo with the following 
 spot_rows_per_page=10
 spot_columns_per_page=10
 cache_timeout=60
+slides_per_page=200
 
 [SLIDES]
 slide_df_cache_dir=slide_df_cache/
