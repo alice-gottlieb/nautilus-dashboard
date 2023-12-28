@@ -69,6 +69,12 @@ except:
     pass
 
 
+slides_per_page=200
+try:
+    slides_per_page = int(cfp["DISPLAY"]["slides_per_page"])
+except:
+    pass
+
 embedding_url_timeout = 20.0
 try:
     embedding_url_timeout = float(cfp["DISPLAY"]["embedding_url_timeout"])
@@ -666,7 +672,7 @@ index_page = html.Div(
             selected_rows=[],
             page_action="native",
             page_current=0,
-            page_size=50,
+            page_size=slides_per_page,
         ),
     ]
 )
